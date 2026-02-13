@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { listen, TauriEvent } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 
 // --- STORE ---
@@ -116,6 +116,7 @@ function App() {
   const canvasRef = useRef(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [isTauri, setIsTauri] = useState(window.__TAURI__ !== undefined);
+  const [isDragging, setIsDragging] = useState(false);
 
   const activeFile = store.files.find(f => f.id === store.activeFileId);
 
@@ -168,6 +169,27 @@ function App() {
         store.setStage(stage);
       });
       return () => { unlisten.then(f => f()); };
+    }
+  }, [isTauri, store]);
+
+  // Tauri Drag & Drop Listeners
+  useEffect(() => {
+    if (isTauri) {
+        let unlisten = [];
+        const setupListeners = async () => {
+            unlisten.push(await listen(TauriEvent.DRAG_ENTER, () => setIsDragging(true)));
+            unlisten.push(await listen(TauriEvent.DRAG_LEAVE, () => setIsDragging(false)));
+            unlisten.push(await listen(TauriEvent.DRAG_DROP, (event) => {
+                setIsDragging(false);
+                if (event.payload.paths && event.payload.paths.length > 0) {
+                    store.addFiles(event.payload.paths.map(p => ({ path: p, name: p.split(/[\\/]/).pop() })));
+                }
+            }));
+        };
+        setupListeners();
+        return () => {
+            unlisten.forEach(f => f());
+        };
     }
   }, [isTauri, store]);
 
@@ -227,8 +249,49 @@ function App() {
     store.setStage('Batch Complete');
   };
 
+  // --- DRAG & DROP HANDLERS ---
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    // Only set to false if we are leaving the main container
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      setIsDragging(false);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+
+    if (!isTauri && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        const selected = Array.from(e.dataTransfer.files);
+        store.addFiles(selected.map(f => ({ file: f, name: f.name })));
+    }
+  };
+
   return (
-    <div className="flex h-screen bg-[#050506] text-zinc-300 font-sans selection:bg-blue-500/30 overflow-hidden border border-zinc-900/50 rounded-lg">
+    <div
+        className="flex h-screen bg-[#050506] text-zinc-300 font-sans selection:bg-blue-500/30 overflow-hidden border border-zinc-900/50 rounded-lg relative"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+    >
+      {/* Drag & Drop Overlay */}
+      {isDragging && (
+        <div className="absolute inset-0 z-50 bg-blue-500/20 backdrop-blur-sm border-4 border-blue-500 flex items-center justify-center pointer-events-none animate-in fade-in duration-200">
+            <div className="bg-zinc-900/90 p-8 rounded-3xl border border-blue-500/50 shadow-2xl flex flex-col items-center gap-4">
+                <div className="w-20 h-20 bg-blue-500/20 rounded-full flex items-center justify-center animate-bounce">
+                    <Upload size={40} className="text-blue-500" />
+                </div>
+                <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Release to Import</h2>
+                <p className="text-sm font-bold text-zinc-400 uppercase tracking-widest">Drop files to add to queue</p>
+            </div>
+        </div>
+      )}
       
       {/* Sidebar Controls */}
       <aside className="w-[340px] border-r border-zinc-900 bg-[#08080A] flex flex-col shadow-2xl z-20">
