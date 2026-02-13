@@ -1,0 +1,20 @@
+{
+    "version": 2,
+    "id": "user_boda_calurosa_2_v1",
+    "name": "boda calurosa 2",
+    "description": "",
+    "base": "reference_neutral_v1",
+    "creative": "user_boda_calurosa_v1",
+    "pipeline": [],
+    "adjustments": {
+        "wb_temp": 0,
+        "wb_tint": 0,
+        "sat": 100,
+        "exposure": 0,
+        "contrast": -3,
+        "highlights": -4,
+        "shadows": -20,
+        "whites": -3,
+        "blacks": 3
+    }
+}

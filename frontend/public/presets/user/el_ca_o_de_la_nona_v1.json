@@ -1,0 +1,20 @@
+{
+    "version": 2,
+    "id": "user_el_ca_o_de_la_nona_v1",
+    "name": "el ca\u00f1o de la nona",
+    "description": "",
+    "base": "reference_neutral_v1",
+    "creative": "clasico_v1",
+    "pipeline": [],
+    "adjustments": {
+        "wb_temp": 0,
+        "wb_tint": 0,
+        "sat": 101,
+        "exposure": 0,
+        "contrast": 0,
+        "highlights": -1,
+        "shadows": 4,
+        "whites": -47,
+        "blacks": 0
+    }
+}

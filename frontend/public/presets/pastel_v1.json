@@ -1,0 +1,24 @@
+{
+    "version": 1,
+    "id": "pastel_v1",
+    "name": "Pastel",
+    "description": "Retratos y exteriores suaves. Colores desaturados, negros lavados y look etéreo.",
+    "pipeline": [
+        {
+            "type": "tone_curve",
+            "params": {
+                "contrast": 0.04,
+                "black_lift": 0.10,
+                "highlight_rolloff": 0.05
+            }
+        },
+        {
+            "type": "color_grade",
+            "params": {
+                "temp_shift": 60,
+                "tint_shift": 0,
+                "sat": 0.88
+            }
+        }
+    ]
+}

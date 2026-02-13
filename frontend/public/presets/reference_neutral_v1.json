@@ -1,0 +1,45 @@
+{
+    "version": 1,
+    "id": "reference_neutral_v1",
+    "name": "Reference Neutral",
+    "description": "Base neutral exposure normalization tuned for events/night without highlight burn.",
+    "pipeline": [
+        {
+            "type": "exposure_normalize",
+            "params": {
+                "target_mid": 0.48,
+                "target_high": 0.90,
+                "hard_clip": 0.96,
+                "mid_low": 0.38,
+                "mid_high": 0.52,
+                "strength": 1.0,
+                "min_gain": 0.6,
+                "max_gain": 2.4,
+                "preserve_highlights": true,
+                "rolloff_threshold": 0.72
+            }
+        },
+        {
+            "type": "tone_curve",
+            "params": {
+                "contrast": 0.05,
+                "black_lift": 0.04,
+                "highlight_rolloff": 0.0
+            }
+        },
+        {
+            "type": "color_grade",
+            "params": {
+                "temp_shift": 0,
+                "tint_shift": 0,
+                "sat": 1.0
+            }
+        },
+        {
+            "type": "local_contrast",
+            "params": {
+                "amount": 0.05
+            }
+        }
+    ]
+}
