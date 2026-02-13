@@ -1,11 +1,11 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "ClioBulk",
-  "version": "0.1.0",
-  "identifier": "com.cliobulk.app",
+  "productName": "FinalStudioRAWr",
+  "version": "1.0.0",
+  "identifier": "com.finalstudiorawr.app",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:5199",
+    "devUrl": "http://localhost:5200",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"
   },

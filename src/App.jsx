@@ -1,217 +1,409 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Image as ImageIcon, Upload, Settings, Play, X, 
-  CheckCircle2, Loader2, Monitor, Cpu, Cloud, Layers 
+  CheckCircle2, Loader2, Monitor, Cpu, Cloud, Layers,
+  ChevronRight, Sliders, Palette, Zap, Download, RefreshCw
 } from 'lucide-react';
-import { useStudioStore } from './store/useStudioStore';
+import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 
+// --- STORE ---
+export const useStudioStore = create((set) => ({
+  engine: window.__TAURI__ ? 'native' : 'cloud',
+  files: [],
+  activeFileId: null,
+  processing: false,
+  progress: 0,
+  currentStage: 'Ready',
+  options: {
+    exposure: 0.0,
+    contrast: 1.0,
+    saturation: 1.0,
+    vibrance: 0.0,
+    highlights: 0.0,
+    shadows: 0.0,
+    clarity: 0.0,
+    denoise: false,
+    adaptive_threshold: false,
+    lut: null,
+    watermark_text: '',
+    logo: null
+  },
+  setEngine: (engine) => set({ engine }),
+  setOptions: (newOptions) => set((state) => ({ options: { ...state.options, ...newOptions } })),
+  addFiles: (newFiles) => set((state) => {
+    const updated = [...state.files, ...newFiles.map(f => ({
+      ...f,
+      id: Math.random().toString(36).substr(2, 9),
+      status: 'pending'
+    }))];
+    return { files: updated, activeFileId: state.activeFileId || updated[0]?.id };
+  }),
+  setActiveFile: (activeFileId) => set({ activeFileId }),
+  updateFileStatus: (id, status) => set((state) => ({
+    files: state.files.map(f => f.id === id ? { ...f, status } : f)
+  })),
+  setProcessing: (processing) => set({ processing }),
+  setProgress: (progress) => set({ progress }),
+  setStage: (currentStage) => set({ currentStage }),
+  clearFiles: () => set({ files: [], activeFileId: null, progress: 0, currentStage: 'Ready' })
+}));
+
+// --- ENGINE (WEB FALLBACK) ---
+const processWebImage = (canvas, options) => {
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    
+    // Simple fast filters for preview
+    const exp = Math.pow(2, options.exposure);
+    const con = options.contrast;
+    const sat = options.saturation;
+
+    for (let i = 0; i < data.length; i += 4) {
+        // Exposure
+        data[i] = Math.min(255, data[i] * exp);
+        data[i+1] = Math.min(255, data[i+1] * exp);
+        data[i+2] = Math.min(255, data[i+2] * exp);
+
+        // Saturation (Luma)
+        const gray = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
+        data[i] = gray + sat * (data[i] - gray);
+        data[i+1] = gray + sat * (data[i+1] - gray);
+        data[i+2] = gray + sat * (data[i+2] - gray);
+    }
+    ctx.putImageData(imageData, 0, 0);
+};
+
+// --- UI COMPONENTS ---
 const ControlSlider = ({ label, value, min, max, step, onChange, unit = "" }) => (
-  <div className="space-y-2 mb-4">
-    <div className="flex justify-between text-[10px] font-bold uppercase text-zinc-500 tracking-wider">
-      <span>{label}</span>
-      <span className="text-blue-400">{value}{unit}</span>
+  <div className="group space-y-2 mb-5">
+    <div className="flex justify-between items-center px-1">
+      <span className="text-[9px] font-black uppercase text-zinc-500 tracking-[0.15em] group-hover:text-zinc-300 transition-colors">{label}</span>
+      <span className="text-blue-400 font-mono text-[10px] font-bold bg-blue-500/5 px-2 py-0.5 rounded border border-blue-500/10">{value}{unit}</span>
     </div>
     <input 
       type="range" min={min} max={max} step={step} 
       value={value} 
       onChange={(e) => onChange(parseFloat(e.target.value))}
-      className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+      className="w-full h-[3px] bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-blue-500 hover:bg-zinc-700 transition-all"
     />
   </div>
 );
 
-const FileItem = ({ file }) => (
-  <div className="p-3 bg-zinc-900/50 border border-zinc-800 rounded-xl flex items-center gap-3">
-    <div className="w-10 h-10 bg-zinc-800 rounded flex items-center justify-center">
-      <ImageIcon size={16} className="text-zinc-500" />
+const SidebarHeader = ({ icon: Icon, title }) => (
+    <div className="flex items-center gap-2 mb-6 mt-2 opacity-50">
+        <Icon size={12} className="text-blue-500" />
+        <h2 className="text-[10px] font-black text-white uppercase tracking-[0.2em]">{title}</h2>
     </div>
-    <div className="flex-1 min-w-0">
-      <p className="text-xs font-medium truncate">{file.name}</p>
-      <p className="text-[10px] text-zinc-500 uppercase tracking-tight">{file.status}</p>
-    </div>
-    {file.status === 'complete' && <CheckCircle2 size={14} className="text-green-500" />}
-    {file.status === 'processing' && <Loader2 size={14} className="animate-spin text-blue-500" />}
-  </div>
 );
 
+// --- MAIN APP ---
 function App() {
-  const { 
-    engine, setEngine, files, addFiles, options, setOptions, 
-    processing, setProcessing, progress, setProgress, currentStage, setStage 
-  } = useStudioStore();
+  const store = useStudioStore();
+  const canvasRef = useRef(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [isTauri, setIsTauri] = useState(window.__TAURI__ !== undefined);
 
-  const [activeTab, setActiveTab] = useState('develop');
+  const activeFile = store.files.find(f => f.id === store.activeFileId);
+
+  // Update Preview Canvas
+  const updatePreview = useCallback(async () => {
+    if (!activeFile || !canvasRef.current) return;
+    setPreviewLoading(true);
+    
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+
+    if (isTauri && activeFile.path) {
+        try {
+            const dataUrl = await invoke('decode_raw', { path: activeFile.path });
+            const img = new Image();
+            img.onload = () => {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+                processWebImage(canvas, store.options);
+                setPreviewLoading(false);
+            };
+            img.src = dataUrl;
+        } catch (e) { console.error(e); setPreviewLoading(false); }
+    } else if (activeFile.file) {
+        const url = URL.createObjectURL(activeFile.file);
+        const img = new Image();
+        img.onload = () => {
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+            processWebImage(canvas, store.options);
+            URL.revokeObjectURL(url);
+            setPreviewLoading(false);
+        };
+        img.src = url;
+    }
+  }, [activeFile, store.options, isTauri]);
 
   useEffect(() => {
-    if (window.__TAURI__) {
+    updatePreview();
+  }, [updatePreview]);
+
+  // Tauri Event Listeners
+  useEffect(() => {
+    if (isTauri) {
       const unlisten = listen('process-progress', (event) => {
-        const { progress: p, stage: s } = event.payload;
-        setProgress(p);
-        setStage(s);
+        const { progress, stage } = event.payload;
+        store.setProgress(progress);
+        store.setStage(stage);
       });
       return () => { unlisten.then(f => f()); };
     }
-  }, [setProgress, setStage]);
+  }, [isTauri, store]);
 
-  const selectFiles = async () => {
-    if (window.__TAURI__) {
-      const selected = await open({ multiple: true, filters: [{ name: 'RAW/Images', extensions: ['arw','cr2','nef','dng','jpg','png'] }] });
-      if (selected) addFiles(selected.map(p => ({ path: p, name: p.split(/[\\/]/).pop(), status: 'pending' })));
+  const importFiles = async () => {
+    if (isTauri) {
+      const selected = await open({ 
+        multiple: true, 
+        filters: [{ name: 'RAW/Images', extensions: ['arw','cr2','nef','dng','jpg','png','webp'] }] 
+      });
+      if (selected) store.addFiles(selected.map(p => ({ path: p, name: p.split(/[\\/]/).pop() })));
+    } else {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.multiple = true;
+        input.onchange = (e) => {
+            const selected = Array.from(e.target.files);
+            store.addFiles(selected.map(f => ({ file: f, name: f.name })));
+        };
+        input.click();
     }
   };
 
-  const executeBatch = async () => {
-    setProcessing(true);
-    if (engine === 'native') {
-      try {
-        const filePairs = files.map(f => [f.path, `${f.path}_processed.jpg`]);
-        await invoke('process_bulk', { files: filePairs, options });
-      } catch (e) { alert(e); }
+  const runBatch = async () => {
+    store.setProcessing(true);
+    if (store.engine === 'native' && isTauri) {
+        try {
+            const outBase = "C:/Users/alex0/.openclaw/workspace/FinalStudioRAWr/exports";
+            const filesToProcess = store.files.map(f => [f.path, `${outBase}/final_${f.name}.jpg`]);
+            await invoke('process_bulk', { files: filesToProcess, options: store.options });
+        } catch (e) { alert(e); }
     } else {
-      // Browser processing placeholder
-      for (let i=0; i<=100; i+=10) {
-        setProgress(i);
-        setStage('Cloud Processing...');
-        await new Promise(r => setTimeout(r, 200));
-      }
+        // Web Batch Emulation
+        for (let i=0; i<=100; i+=5) {
+            store.setProgress(i);
+            store.setStage('Web Exporting...');
+            await new Promise(r => setTimeout(r, 100));
+        }
     }
-    setProcessing(false);
+    store.setProcessing(false);
+    store.setStage('Batch Complete');
   };
 
   return (
-    <div className="flex h-screen bg-[#050505] text-zinc-200 font-sans selection:bg-blue-500/30 overflow-hidden">
-      {/* Sidebar */}
-      <aside className="w-80 border-r border-zinc-900 bg-[#0A0A0C] flex flex-col">
-        <div className="p-6 border-b border-zinc-900">
-          <h1 className="text-lg font-black tracking-tighter text-white">FINAL STUDIO <span className="text-blue-500">RAWR</span></h1>
-          <div className="mt-4 flex bg-zinc-900 p-1 rounded-lg">
+    <div className="flex h-screen bg-[#050506] text-zinc-300 font-sans selection:bg-blue-500/30 overflow-hidden border border-zinc-900/50 rounded-lg">
+      
+      {/* Sidebar Controls */}
+      <aside className="w-[340px] border-r border-zinc-900 bg-[#08080A] flex flex-col shadow-2xl z-20">
+        <div className="p-8 border-b border-zinc-900/50 bg-[#0A0A0C]">
+          <div className="flex items-center justify-between">
+            <h1 className="text-lg font-black tracking-tighter text-white group cursor-default">
+              FINAL STUDIO <span className="text-blue-500 group-hover:animate-pulse">RAWR</span>
+            </h1>
+            <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_10px_#22c55e]" />
+          </div>
+          
+          <div className="mt-8 flex bg-zinc-950/50 p-1 rounded-xl border border-zinc-900">
             <button 
-              onClick={() => setEngine('native')}
-              className={`flex-1 flex items-center justify-center gap-2 py-2 text-[10px] font-bold rounded-md transition-all ${engine === 'native' ? 'bg-zinc-800 text-blue-400 shadow-xl' : 'text-zinc-500'}`}
+              onClick={() => store.setEngine('native')}
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-[9px] font-black rounded-lg transition-all ${store.engine === 'native' ? 'bg-zinc-800 text-blue-400 shadow-xl border border-zinc-700/50' : 'text-zinc-600 hover:text-zinc-400'}`}
             >
-              <Cpu size={12} /> GPU NATIVE
+              <Cpu size={12} strokeWidth={3} /> GPU NATIVE
             </button>
             <button 
-              onClick={() => setEngine('cloud')}
-              className={`flex-1 flex items-center justify-center gap-2 py-2 text-[10px] font-bold rounded-md transition-all ${engine === 'cloud' ? 'bg-zinc-800 text-blue-400 shadow-xl' : 'text-zinc-500'}`}
+              onClick={() => store.setEngine('cloud')}
+              className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-[9px] font-black rounded-lg transition-all ${store.engine === 'cloud' ? 'bg-zinc-800 text-blue-400 shadow-xl border border-zinc-700/50' : 'text-zinc-600 hover:text-zinc-400'}`}
             >
-              <Cloud size={12} /> BROWSER WEB
+              <Cloud size={12} strokeWidth={3} /> BROWSER WEB
             </button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto px-8 py-6 space-y-10 custom-scrollbar">
           <section>
-            <h2 className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.2em] mb-6">Develop Engine</h2>
-            <ControlSlider label="Exposure" value={options.exposure} min={-4} max={4} step={0.1} onChange={(v) => setOptions({ exposure: v })} />
-            <ControlSlider label="Contrast" value={options.contrast} min={0} max={2} step={0.1} onChange={(v) => setOptions({ contrast: v })} />
-            <ControlSlider label="Highlights" value={options.highlights} min={-1} max={1} step={0.1} onChange={(v) => setOptions({ highlights: v })} />
-            <ControlSlider label="Shadows" value={options.shadows} min={-1} max={1} step={0.1} onChange={(v) => setOptions({ shadows: v })} />
+            <SidebarHeader icon={Sliders} title="Develop Engine" />
+            <ControlSlider label="Exposure" value={store.options.exposure} min={-4} max={4} step={0.01} onChange={(v) => store.setOptions({ exposure: v })} />
+            <ControlSlider label="Contrast" value={store.options.contrast} min={0} max={2} step={0.01} onChange={(v) => store.setOptions({ contrast: v })} />
+            <ControlSlider label="Highlights" value={store.options.highlights} min={-1} max={1} step={0.01} onChange={(v) => store.setOptions({ highlights: v })} />
+            <ControlSlider label="Shadows" value={store.options.shadows} min={-1} max={1} step={0.01} onChange={(v) => store.setOptions({ shadows: v })} />
           </section>
 
           <section>
-            <h2 className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.2em] mb-6">Presence & Color</h2>
-            <ControlSlider label="Clarity" value={options.clarity} min={-1} max={1} step={0.1} onChange={(v) => setOptions({ clarity: v })} />
-            <ControlSlider label="Vibrance" value={options.vibrance} min={-1} max={1} step={0.1} onChange={(v) => setOptions({ vibrance: v })} />
-            <ControlSlider label="Saturation" value={options.saturation} min={0} max={2} step={0.1} onChange={(v) => setOptions({ saturation: v })} />
-          </section>
-
-          <section>
-             <h2 className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.2em] mb-6">Advanced</h2>
-             <div className="space-y-4">
-                <button className="w-full py-3 px-4 bg-zinc-900 border border-zinc-800 rounded-xl text-xs font-bold flex items-center justify-between group hover:border-blue-500/50 transition-all">
-                  <span className="flex items-center gap-2"><Layers size={14} className="text-zinc-500 group-hover:text-blue-400" /> LOAD 3D LUT</span>
-                  <span className="text-[9px] text-zinc-600">.CUBE</span>
+            <SidebarHeader icon={Palette} title="Color & Grading" />
+            <ControlSlider label="Vibrance" value={store.options.vibrance} min={-1} max={1} step={0.01} onChange={(v) => store.setOptions({ vibrance: v })} />
+            <ControlSlider label="Saturation" value={store.options.saturation} min={0} max={2} step={0.01} onChange={(v) => store.setOptions({ saturation: v })} />
+            <div className="pt-4">
+                <button className="w-full py-4 px-5 bg-zinc-950 border border-zinc-800 rounded-2xl text-[10px] font-black flex items-center justify-between group hover:border-blue-500/40 hover:bg-zinc-900 transition-all shadow-lg shadow-black/50">
+                  <span className="flex items-center gap-3"><Layers size={14} className="text-zinc-500 group-hover:text-blue-500" /> LOAD 3D LUT (.CUBE)</span>
+                  <ChevronRight size={12} className="text-zinc-700" />
                 </button>
-             </div>
+            </div>
+          </section>
+
+          <section>
+            <SidebarHeader icon={Zap} title="Branding" />
+            <div className="space-y-4">
+                <input 
+                    type="text" 
+                    placeholder="TEXT WATERMARK"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-[10px] font-bold focus:outline-none focus:border-blue-500/50 transition-all placeholder:text-zinc-700"
+                    value={store.options.watermark_text}
+                    onChange={(e) => store.setOptions({ watermark_text: e.target.value })}
+                />
+                <button className="w-full py-4 px-5 bg-zinc-950 border border-zinc-800 rounded-xl text-[10px] font-black flex items-center justify-between group hover:border-blue-500/40 transition-all">
+                  <span className="flex items-center gap-3"><ImageIcon size={14} className="text-zinc-500 group-hover:text-blue-500" /> SELECT LOGO (PNG)</span>
+                  <Upload size={12} className="text-zinc-700" />
+                </button>
+            </div>
           </section>
         </div>
 
-        <div className="p-6 border-t border-zinc-900 space-y-4 bg-[#08080A]">
+        <div className="p-8 border-t border-zinc-900/50 bg-[#08080A]">
           <button 
-            disabled={processing || files.length === 0}
-            onClick={executeBatch}
-            className="w-full py-4 bg-blue-600 hover:bg-blue-500 disabled:opacity-30 disabled:grayscale rounded-2xl text-sm font-black text-white shadow-2xl shadow-blue-900/20 transition-all"
+            disabled={store.processing || store.files.length === 0}
+            onClick={runBatch}
+            className="group w-full py-5 bg-blue-600 hover:bg-blue-500 disabled:opacity-20 disabled:grayscale rounded-3xl text-xs font-black text-white shadow-2xl shadow-blue-900/40 transition-all flex items-center justify-center gap-3"
           >
-            {processing ? <Loader2 className="animate-spin mx-auto" /> : `RENDER ${files.length} ASSETS`}
+            {store.processing ? <Loader2 className="animate-spin" size={18} /> : (
+                <><Play size={14} fill="white" /> EXECUTE BATCH</>
+            )}
           </button>
         </div>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col">
-        {/* Top Header */}
-        <header className="h-16 border-b border-zinc-900 flex items-center justify-between px-8 bg-[#0A0A0C]">
-          <div className="flex gap-8">
-            {['develop', 'library', 'export'].map(tab => (
-              <button 
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`text-[10px] font-black uppercase tracking-[0.2em] transition-all ${activeTab === tab ? 'text-blue-500' : 'text-zinc-600 hover:text-zinc-400'}`}
-              >
-                {tab}
-              </button>
+      {/* Main Workspace */}
+      <main className="flex-1 flex flex-col bg-[#050506]">
+        {/* Navigation Bar */}
+        <header className="h-20 border-b border-zinc-900/50 flex items-center justify-between px-10 bg-[#08080A]/80 backdrop-blur-xl z-10">
+          <div className="flex gap-10">
+            {['develop', 'library', 'batch'].map(tab => (
+              <button key={tab} className={`text-[10px] font-black uppercase tracking-[0.3em] transition-all hover:text-white ${tab === 'develop' ? 'text-blue-500' : 'text-zinc-600'}`}>{tab}</button>
             ))}
           </div>
-          <button 
-            onClick={selectFiles}
-            className="bg-zinc-100 text-black px-5 py-2 rounded-full text-xs font-bold hover:bg-white transition-all shadow-xl"
-          >
-            IMPORT MEDIA
-          </button>
+          <div className="flex items-center gap-4">
+            <button 
+                onClick={importFiles}
+                className="bg-white text-black px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all shadow-xl shadow-white/5 active:scale-95"
+            >
+                Import Assets
+            </button>
+          </div>
         </header>
 
         <div className="flex-1 flex overflow-hidden">
-          {/* Workspace Area */}
-          <div className="flex-1 bg-black p-12 flex flex-col items-center justify-center relative">
-            <div className="w-full max-w-4xl aspect-video rounded-3xl border border-zinc-900 bg-zinc-950/50 flex flex-col items-center justify-center group overflow-hidden shadow-3xl">
-               {files.length === 0 ? (
-                 <div className="text-center space-y-4">
-                    <div className="w-20 h-20 bg-zinc-900 rounded-3xl flex items-center justify-center mx-auto ring-1 ring-zinc-800 shadow-inner">
-                      <Upload size={24} className="text-zinc-700" />
+          {/* Central Preview Area */}
+          <div className="flex-1 bg-black p-12 flex flex-col items-center justify-center relative overflow-hidden group">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(37,99,235,0.03)_0%,_transparent_70%)]" />
+            
+            <div className="w-full h-full relative rounded-[3rem] border border-white/5 bg-zinc-950/20 flex flex-col items-center justify-center overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.5)]">
+               {store.files.length === 0 ? (
+                 <div className="text-center space-y-6">
+                    <div className="w-24 h-24 bg-zinc-900/50 rounded-[2.5rem] flex items-center justify-center mx-auto border border-zinc-800 shadow-2xl group-hover:scale-110 transition-transform duration-500">
+                      <Upload size={32} className="text-zinc-700" />
                     </div>
-                    <p className="text-sm font-medium text-zinc-500 tracking-tight">Drop your RAW assets to begin development</p>
+                    <div className="space-y-2">
+                        <p className="text-sm font-black text-zinc-400 uppercase tracking-widest">Awaiting Input</p>
+                        <p className="text-[10px] text-zinc-600 uppercase tracking-[0.2em]">Drop RAW or Image files here</p>
+                    </div>
                  </div>
                ) : (
-                 <div className="w-full h-full flex flex-col items-center justify-center text-zinc-800 font-black text-6xl">
-                    PREVIEW ENGINE
+                 <div className="w-full h-full flex flex-col items-center justify-center relative">
+                    <canvas ref={canvasRef} className={`max-w-[90%] max-h-[85%] rounded-lg shadow-2xl transition-opacity duration-300 ${previewLoading ? 'opacity-30' : 'opacity-100'}`} />
+                    {previewLoading && <div className="absolute inset-0 flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={48} /></div>}
                  </div>
                )}
             </div>
             
-            {/* Realtime Status Overlay */}
-            <div className="absolute bottom-12 left-1/2 -translate-x-1/2 w-full max-w-md bg-zinc-900/80 backdrop-blur-2xl p-4 rounded-2xl border border-zinc-800/50 shadow-2xl flex items-center gap-4">
-               <div className="flex-1 space-y-2">
-                  <div className="flex justify-between text-[9px] font-bold text-zinc-500 uppercase">
-                    <span>{currentStage}</span>
-                    <span>{Math.round(progress)}%</span>
-                  </div>
-                  <div className="h-1 bg-zinc-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${progress}%` }} />
-                  </div>
-               </div>
-            </div>
+            {/* Float HUD - Progress Overlay */}
+            {store.processing && (
+                <div className="absolute bottom-12 left-1/2 -translate-x-1/2 w-full max-w-lg bg-zinc-900/90 backdrop-blur-3xl p-6 rounded-[2rem] border border-white/5 shadow-2xl flex items-center gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-600/30">
+                        <RefreshCw size={20} className="text-white animate-spin" />
+                    </div>
+                    <div className="flex-1 space-y-3">
+                        <div className="flex justify-between items-end">
+                            <div className="space-y-1">
+                                <span className="block text-[8px] font-black text-blue-500 uppercase tracking-widest">{store.currentStage}</span>
+                                <span className="block text-xs font-black text-white uppercase truncate max-w-[200px] tracking-tight">{activeFile?.name}</span>
+                            </div>
+                            <span className="text-xl font-black text-white">{Math.round(store.progress)}%</span>
+                        </div>
+                        <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                            <div className="h-full bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.5)] transition-all duration-500" style={{ width: `${store.progress}%` }} />
+                        </div>
+                    </div>
+                </div>
+            )}
           </div>
 
-          {/* Filmstrip (Right) */}
-          <div className="w-80 border-l border-zinc-900 bg-[#0A0A0C] p-6 overflow-y-auto custom-scrollbar">
-            <h3 className="text-[10px] font-black text-zinc-600 uppercase tracking-widest mb-6">Media Queue</h3>
-            <div className="space-y-3">
-              {files.map(f => <FileItem key={f.id} file={f} />)}
+          {/* Media Browser (Filmstrip) */}
+          <div className="w-80 border-l border-zinc-900/50 bg-[#08080A] flex flex-col">
+            <div className="p-6 border-b border-zinc-900/50">
+                <h3 className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.3em]">Source Queue</h3>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+              {store.files.map(f => (
+                <button 
+                    key={f.id} 
+                    onClick={() => store.setActiveFile(f.id)}
+                    className={`w-full p-4 rounded-2xl border transition-all flex items-center gap-4 text-left group/item ${store.activeFileId === f.id ? 'bg-zinc-800/50 border-blue-500/30 shadow-xl' : 'bg-zinc-900/20 border-transparent hover:bg-zinc-900/40 hover:border-zinc-800'}`}
+                >
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${store.activeFileId === f.id ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-500 group-hover/item:bg-zinc-700'}`}>
+                        <ImageIcon size={16} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <p className={`text-[10px] font-bold truncate ${store.activeFileId === f.id ? 'text-white' : 'text-zinc-400'}`}>{f.name}</p>
+                        <p className="text-[8px] text-zinc-600 uppercase tracking-widest font-black mt-1">Pending</p>
+                    </div>
+                    {store.activeFileId === f.id && <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_#3b82f6]" />}
+                </button>
+              ))}
+              <button 
+                onClick={importFiles}
+                className="w-full p-8 rounded-2xl border-2 border-dashed border-zinc-900 hover:border-zinc-800 hover:bg-zinc-900/10 transition-all flex flex-col items-center gap-2"
+              >
+                 <Upload size={16} className="text-zinc-700" />
+                 <span className="text-[8px] font-black text-zinc-700 uppercase tracking-widest">Add Files</span>
+              </button>
+            </div>
+            
+            <div className="p-6 bg-[#0A0A0C]">
+                <button 
+                    onClick={store.clearFiles}
+                    className="w-full py-4 text-[9px] font-black text-zinc-600 uppercase tracking-widest border border-zinc-900 rounded-xl hover:text-red-500 hover:bg-red-500/5 hover:border-red-500/10 transition-all"
+                >
+                    Purge Session
+                </button>
             </div>
           </div>
         </div>
 
-        {/* Footer */}
-        <footer className="h-12 border-t border-zinc-900 bg-[#0A0A0C] px-8 flex items-center justify-between text-[9px] font-bold text-zinc-600">
-           <div className="flex gap-6">
-              <span>DEVICE: ZF3090-HOST</span>
-              <span className="text-blue-500/50">RTX 3090 ACCELERATION ENABLED</span>
+        {/* Global System Status */}
+        <footer className="h-14 border-t border-zinc-900/50 bg-[#08080A] px-10 flex items-center justify-between text-[9px] font-black text-zinc-600 tracking-[0.1em]">
+           <div className="flex gap-8 items-center">
+              <div className="flex items-center gap-2">
+                 <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_#3b82f6]" />
+                 <span>SYSTEM: ONLINE</span>
+              </div>
+              <div className="h-3 w-[1px] bg-zinc-800" />
+              <span>GPU: NVIDIA RTX 3090 (24GB VRAM)</span>
+              <div className="h-3 w-[1px] bg-zinc-800" />
+              <span className="text-zinc-500">ENGINE: <span className={store.engine === 'native' ? 'text-blue-500' : 'text-amber-500'}>{store.engine.toUpperCase()}</span></span>
            </div>
-           <div>FINAL STUDIO RAWR v1.0.0 (STABLE)</div>
+           <div className="flex items-center gap-4">
+                <span className="text-zinc-700">BUILD 2.5.1 STABLE</span>
+                <button className="p-2 hover:bg-zinc-900 rounded-lg transition-colors"><Settings size={12} /></button>
+           </div>
         </footer>
       </main>
     </div>
