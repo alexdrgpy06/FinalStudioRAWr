@@ -10,7 +10,6 @@ pub fn run() {
     .plugin(tauri_plugin_dialog::init())
     .plugin(LogBuilder::default().build())
     .invoke_handler(tauri::generate_handler![
-        commands::process_image,
         commands::process_bulk,
         commands::decode_raw
     ])

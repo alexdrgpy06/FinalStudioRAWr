@@ -99,13 +99,25 @@ pub fn process_image_inner<R: Runtime>(
 }
 
 #[tauri::command]
-pub async fn process_bulk(app: AppHandle, files: Vec<(String, String)>, options: ProcessOptions) -> Result<(), String> {
+pub async fn process_bulk(app: AppHandle, files: Vec<String>, output_dir: String, options: ProcessOptions) -> Result<(), String> {
     let total = files.len() as f32;
     let concurrency = (num_cpus::get() as f32 * 0.75).ceil() as usize;
     let semaphore = Arc::new(Semaphore::new(concurrency));
     let mut handles = Vec::new();
 
-    for (i, (in_p, out_p)) in files.into_iter().enumerate() {
+    if !std::path::Path::new(&output_dir).exists() {
+        return Err(format!("Output directory not found: {}", output_dir));
+    }
+
+    for (i, in_p) in files.into_iter().enumerate() {
+        let file_name = std::path::Path::new(&in_p)
+            .file_name().ok_or("Invalid path")?
+            .to_str().ok_or("Invalid path string")?;
+        let out_p = std::path::Path::new(&output_dir)
+            .join(format!("final_{}.jpg", file_name))
+            .to_string_lossy()
+            .to_string();
+
         let app_h = app.clone();
         let options_h = options.clone();
         let sem_h = semaphore.clone();

@@ -212,8 +212,8 @@ function App() {
     store.setProcessing(true);
     if (store.engine === 'native' && isTauri) {
         try {
-            const filesToProcess = store.files.map(f => [f.path, `${outDir}/final_${f.name}.jpg`]);
-            await invoke('process_bulk', { files: filesToProcess, options: store.options });
+            const filesToProcess = store.files.map(f => f.path);
+            await invoke('process_bulk', { files: filesToProcess, output_dir: outDir, options: store.options });
         } catch (e) { alert(e); }
     } else {
         // Web Batch Emulation
