@@ -4,6 +4,8 @@ use base64::{Engine as _, engine::general_purpose};
 use tauri::{AppHandle, Emitter, Runtime};
 use log::{info, error};
 use std::sync::Arc;
+use std::fs;
+use std::path::Path;
 use tokio::sync::Semaphore;
 use crate::image_ops;
 
@@ -80,14 +82,25 @@ pub fn process_image_inner<R: Runtime>(
     match img_res {
         Ok(img) => {
             let img = image_ops::apply_filters(img, &options);
+
+            // Ensure parent directory exists
+            if let Some(parent) = Path::new(&out_path).parent() {
+                if let Err(e) = fs::create_dir_all(parent) {
+                    let err_msg = format!("Failed to create directory: {}", e);
+                    emit("failed", false, Some(err_msg.clone()));
+                    return ProcessResult { success: false, path: out_path, error: Some(err_msg) };
+                }
+            }
+
             match img.save(&out_path) {
                 Ok(_) => {
                     emit("completed", true, None);
                     ProcessResult { success: true, path: out_path, error: None }
                 },
                 Err(e) => {
-                    emit("failed", false, Some(e.to_string()));
-                    ProcessResult { success: false, path: out_path, error: Some(e.to_string()) }
+                    let err_msg = format!("Failed to save image: {}", e);
+                    emit("failed", false, Some(err_msg.clone()));
+                    ProcessResult { success: false, path: out_path, error: Some(err_msg) }
                 },
             }
         }
