@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import FileListItem from './components/FileListItem';
 import { 
   Image as ImageIcon, Upload, Settings, Play, X, 
   CheckCircle2, Loader2, Monitor, Cpu, Cloud, Layers,
@@ -402,20 +403,12 @@ function App() {
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
               {store.files.map(f => (
-                <button 
-                    key={f.id} 
-                    onClick={() => store.setActiveFile(f.id)}
-                    className={`w-full p-4 rounded-2xl border transition-all flex items-center gap-4 text-left group/item ${store.activeFileId === f.id ? 'bg-zinc-800/50 border-blue-500/30 shadow-xl' : 'bg-zinc-900/20 border-transparent hover:bg-zinc-900/40 hover:border-zinc-800'}`}
-                >
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${store.activeFileId === f.id ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-500 group-hover/item:bg-zinc-700'}`}>
-                        <ImageIcon size={16} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                        <p className={`text-[10px] font-bold truncate ${store.activeFileId === f.id ? 'text-white' : 'text-zinc-400'}`}>{f.name}</p>
-                        <p className="text-[8px] text-zinc-600 uppercase tracking-widest font-black mt-1">Pending</p>
-                    </div>
-                    {store.activeFileId === f.id && <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_#3b82f6]" />}
-                </button>
+                <FileListItem
+                  key={f.id}
+                  file={f}
+                  isActive={store.activeFileId === f.id}
+                  onSelect={store.setActiveFile}
+                />
               ))}
               <button 
                 onClick={importFiles}
