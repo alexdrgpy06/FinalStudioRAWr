@@ -15,6 +15,19 @@ pub fn decode_raw_to_image(path: &str) -> Result<DynamicImage, String> {
     let out_h = height / 2;
     let max_val = raw.whitelevel.unwrap_or(65535) as f32; // Default to 16-bit if unknown
 
+    // Pre-calculate pattern offsets for the first 2x2 block
+    // CFA pattern is typically 2x2.
+    // color_at(0,0), color_at(1,0), color_at(0,1), color_at(1,1)
+    let c00 = raw.cfa.color_at(0, 0);
+    let c10 = raw.cfa.color_at(1, 0);
+    let c01 = raw.cfa.color_at(0, 1);
+    let c11 = raw.cfa.color_at(1, 1);
+
+    // Map the 4 pixels of a 2x2 block to R, G, B based on CFA
+    // Usually:
+    // RGGB -> R=0, G=1, B=2. (0,0)=R, (1,0)=G, (0,1)=G, (1,1)=B
+    // We need to sum up values for each channel and divide by count.
+
     match raw.data {
         rawloader::RawImageData::Integer(ref data) => {
             let mut vec = Vec::with_capacity(out_w * out_h * 3);
@@ -27,20 +40,35 @@ pub fn decode_raw_to_image(path: &str) -> Result<DynamicImage, String> {
                         continue;
                     }
 
-                    // Naive Bayer Demosaicing (assuming RGGB pattern generally works well enough for preview)
-                    // R G
-                    // G B
-                    // If the pattern is different, colors might be swapped, but it will be an image.
+                    let p00 = data[base_idx] as f32;
+                    let p10 = data[base_idx + 1] as f32;
+                    let p01 = data[base_idx + width] as f32;
+                    let p11 = data[base_idx + width + 1] as f32;
 
-                    let p1 = data[base_idx] as f32;          // R?
-                    let p2 = data[base_idx + 1] as f32;      // G1?
-                    let p3 = data[base_idx + width] as f32;  // G2?
-                    let p4 = data[base_idx + width + 1] as f32; // B?
+                    let mut r_sum = 0.0; let mut r_cnt = 0.0;
+                    let mut g_sum = 0.0; let mut g_cnt = 0.0;
+                    let mut b_sum = 0.0; let mut b_cnt = 0.0;
+
+                    let mut add_pixel = |color: usize, val: f32| {
+                        if color == 0 { r_sum += val; r_cnt += 1.0; }
+                        else if color == 1 { g_sum += val; g_cnt += 1.0; }
+                        else if color == 2 { b_sum += val; b_cnt += 1.0; }
+                    };
+
+                    add_pixel(c00, p00);
+                    add_pixel(c10, p10);
+                    add_pixel(c01, p01);
+                    add_pixel(c11, p11);
+
+                    // Avoid division by zero, though in Bayer 2x2 it shouldn't happen for RGB
+                    let r_val = if r_cnt > 0.0 { r_sum / r_cnt } else { 0.0 };
+                    let g_val = if g_cnt > 0.0 { g_sum / g_cnt } else { 0.0 };
+                    let b_val = if b_cnt > 0.0 { b_sum / b_cnt } else { 0.0 };
 
                     // Normalize to 0-255 range based on white level
-                    let r = (p1 / max_val * 255.0).clamp(0.0, 255.0) as u8;
-                    let g = (((p2 + p3) / 2.0) / max_val * 255.0).clamp(0.0, 255.0) as u8;
-                    let b = (p4 / max_val * 255.0).clamp(0.0, 255.0) as u8;
+                    let r = (r_val / max_val * 255.0).clamp(0.0, 255.0) as u8;
+                    let g = (g_val / max_val * 255.0).clamp(0.0, 255.0) as u8;
+                    let b = (b_val / max_val * 255.0).clamp(0.0, 255.0) as u8;
 
                     vec.push(r);
                     vec.push(g);
@@ -49,10 +77,6 @@ pub fn decode_raw_to_image(path: &str) -> Result<DynamicImage, String> {
             }
             
             // Adjust dimensions if loop broke early
-            let actual_pixels = vec.len() / 3;
-            // Re-calculate dimensions if needed or just use what we have if full
-            // For now assume full success for simplicity as checks should hold
-
             let img = ImageBuffer::<Rgb<u8>, _>::from_raw(out_w as u32, out_h as u32, vec)
                 .ok_or("Failed to create image buffer from RAW data")?;
             Ok(DynamicImage::ImageRgb8(img))
@@ -65,15 +89,34 @@ pub fn decode_raw_to_image(path: &str) -> Result<DynamicImage, String> {
                     if idx + width + 1 >= data.len() {
                         continue;
                     }
-                    // Floats are usually 0.0-1.0 already or need normalization?
-                    // rawloader docs say "linear float data". Assume normalized or check?
-                    // Usually rawloader float is normalized to 0..1 or follows whitelevel logic.
-                    // Let's assume standard 0-1 range for simplicity as per previous code,
-                    // but clamp aggressively.
 
-                    let r = (data[idx] * 255.0).clamp(0.0, 255.0) as u8;
-                    let g = (((data[idx + 1] + data[idx + width]) / 2.0) * 255.0).clamp(0.0, 255.0) as u8;
-                    let b = (data[idx + width + 1] * 255.0).clamp(0.0, 255.0) as u8;
+                    let p00 = data[idx] as f32;
+                    let p10 = data[idx + 1] as f32;
+                    let p01 = data[idx + width] as f32;
+                    let p11 = data[idx + width + 1] as f32;
+
+                    let mut r_sum = 0.0; let mut r_cnt = 0.0;
+                    let mut g_sum = 0.0; let mut g_cnt = 0.0;
+                    let mut b_sum = 0.0; let mut b_cnt = 0.0;
+
+                    let mut add_pixel = |color: usize, val: f32| {
+                        if color == 0 { r_sum += val; r_cnt += 1.0; }
+                        else if color == 1 { g_sum += val; g_cnt += 1.0; }
+                        else if color == 2 { b_sum += val; b_cnt += 1.0; }
+                    };
+
+                    add_pixel(c00, p00);
+                    add_pixel(c10, p10);
+                    add_pixel(c01, p01);
+                    add_pixel(c11, p11);
+
+                    let r_val = if r_cnt > 0.0 { r_sum / r_cnt } else { 0.0 };
+                    let g_val = if g_cnt > 0.0 { g_sum / g_cnt } else { 0.0 };
+                    let b_val = if b_cnt > 0.0 { b_sum / b_cnt } else { 0.0 };
+
+                    let r = (r_val * 255.0).clamp(0.0, 255.0) as u8;
+                    let g = (g_val * 255.0).clamp(0.0, 255.0) as u8;
+                    let b = (b_val * 255.0).clamp(0.0, 255.0) as u8;
 
                     vec.push(r);
                     vec.push(g);
