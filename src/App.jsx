@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Image as ImageIcon, Upload, Settings, Play, X, 
   CheckCircle2, Loader2, Monitor, Cpu, Cloud, Layers,
-  ChevronRight, Sliders, Palette, Zap, Download, RefreshCw
+  ChevronRight, Sliders, Palette, Zap, Download, RefreshCw, FolderOpen
 } from 'lucide-react';
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
@@ -14,6 +14,7 @@ export const useStudioStore = create((set) => ({
   engine: window.__TAURI__ ? 'native' : 'cloud',
   files: [],
   activeFileId: null,
+  outputDir: null,
   processing: false,
   progress: 0,
   currentStage: 'Ready',
@@ -32,6 +33,7 @@ export const useStudioStore = create((set) => ({
     logo: null
   },
   setEngine: (engine) => set({ engine }),
+  setOutputDir: (outputDir) => set({ outputDir }),
   setOptions: (newOptions) => set((state) => ({ options: { ...state.options, ...newOptions } })),
   addFiles: (newFiles) => set((state) => {
     const updated = [...state.files, ...newFiles.map(f => ({
@@ -50,6 +52,14 @@ export const useStudioStore = create((set) => ({
   setStage: (currentStage) => set({ currentStage }),
   clearFiles: () => set({ files: [], activeFileId: null, progress: 0, currentStage: 'Ready' })
 }));
+
+const PRESETS = [
+    { name: 'Cinematic', options: { exposure: 0.1, contrast: 1.2, saturation: 1.1, vibrance: 0.2, shadows: -0.1, highlights: -0.2 } },
+    { name: 'B&W High', options: { exposure: 0.0, contrast: 1.3, saturation: 0, vibrance: 0, shadows: -0.2, highlights: 0.1 } },
+    { name: 'Vintage', options: { exposure: 0.05, contrast: 1.1, saturation: 0.8, vibrance: 0.1, shadows: 0.1, highlights: -0.1 } },
+    { name: 'Soft', options: { exposure: 0.1, contrast: 0.9, saturation: 0.9, vibrance: 0.0, clarity: -0.2 } },
+    { name: 'Punchy', options: { exposure: 0.0, contrast: 1.25, saturation: 1.2, vibrance: 0.3, highlights: 0.1, shadows: -0.1 } },
+];
 
 // --- ENGINE (WEB FALLBACK) ---
 const processWebImage = (canvas, options) => {
@@ -180,12 +190,29 @@ function App() {
     }
   };
 
+  const selectOutputDir = async () => {
+      if (isTauri) {
+          const selected = await open({
+              directory: true,
+              multiple: false,
+          });
+          if (selected) store.setOutputDir(selected);
+      }
+  };
+
   const runBatch = async () => {
+    let outDir = store.outputDir;
+    if (store.engine === 'native' && isTauri && !outDir) {
+        alert("Please select an output directory first.");
+        await selectOutputDir();
+        outDir = useStudioStore.getState().outputDir;
+        if (!outDir) return;
+    }
+
     store.setProcessing(true);
     if (store.engine === 'native' && isTauri) {
         try {
-            const outBase = "C:/Users/alex0/.openclaw/workspace/FinalStudioRAWr/exports";
-            const filesToProcess = store.files.map(f => [f.path, `${outBase}/final_${f.name}.jpg`]);
+            const filesToProcess = store.files.map(f => [f.path, `${outDir}/final_${f.name}.jpg`]);
             await invoke('process_bulk', { files: filesToProcess, options: store.options });
         } catch (e) { alert(e); }
     } else {
@@ -231,6 +258,21 @@ function App() {
 
         <div className="flex-1 overflow-y-auto px-8 py-6 space-y-10 custom-scrollbar">
           <section>
+            <SidebarHeader icon={Layers} title="Quick Presets" />
+            <div className="grid grid-cols-2 gap-2">
+                {PRESETS.map(preset => (
+                    <button
+                        key={preset.name}
+                        onClick={() => store.setOptions(preset.options)}
+                        className="py-3 px-2 bg-zinc-900 border border-zinc-800 rounded-xl text-[9px] font-black uppercase hover:bg-zinc-800 hover:border-zinc-700 hover:text-blue-400 transition-all text-zinc-500"
+                    >
+                        {preset.name}
+                    </button>
+                ))}
+            </div>
+          </section>
+
+          <section>
             <SidebarHeader icon={Sliders} title="Develop Engine" />
             <ControlSlider label="Exposure" value={store.options.exposure} min={-4} max={4} step={0.01} onChange={(v) => store.setOptions({ exposure: v })} />
             <ControlSlider label="Contrast" value={store.options.contrast} min={0} max={2} step={0.01} onChange={(v) => store.setOptions({ contrast: v })} />
@@ -268,7 +310,14 @@ function App() {
           </section>
         </div>
 
-        <div className="p-8 border-t border-zinc-900/50 bg-[#08080A]">
+        <div className="p-8 border-t border-zinc-900/50 bg-[#08080A] space-y-4">
+          <button
+            onClick={selectOutputDir}
+            className="w-full py-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-2xl text-[9px] font-black text-zinc-400 uppercase tracking-widest flex items-center justify-center gap-2 transition-all"
+          >
+            <FolderOpen size={12} /> {store.outputDir ? 'CHANGE OUTPUT' : 'SELECT OUTPUT'}
+          </button>
+
           <button 
             disabled={store.processing || store.files.length === 0}
             onClick={runBatch}
