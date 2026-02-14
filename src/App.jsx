@@ -3,7 +3,8 @@ import FileListItem from './components/FileListItem';
 import { 
   Image as ImageIcon, Upload, Settings, Play, X, 
   CheckCircle2, Loader2, Monitor, Cpu, Cloud, Layers,
-  ChevronRight, Sliders, Palette, Zap, Download, RefreshCw, FolderOpen, Menu
+  ChevronRight, Sliders, Palette, Zap, Download, RefreshCw, FolderOpen, Menu,
+  Maximize, Minimize, Trash2
 } from 'lucide-react';
 import { create } from 'zustand';
 
@@ -12,7 +13,6 @@ export const useStudioStore = create((set) => ({
   engine: 'cloud',
   files: [],
   activeFileId: null,
-  outputDir: null,
   processing: false,
   progress: 0,
   currentStage: 'Ready',
@@ -28,10 +28,13 @@ export const useStudioStore = create((set) => ({
     adaptive_threshold: false,
     lut: null,
     watermark_text: '',
-    logo: null
+    watermark_pos: 'bottom-right',
+    watermark_size: 3, // % of width
+    logo: null,
+    logo_pos: 'bottom-right',
+    logo_size: 15 // % of width
   },
   setEngine: (engine) => set({ engine }),
-  setOutputDir: (outputDir) => set({ outputDir }),
   setOptions: (newOptions) => set((state) => ({ options: { ...state.options, ...newOptions } })),
   addFiles: (newFiles) => set((state) => {
     const updated = [...state.files, ...newFiles.map(f => ({
@@ -42,6 +45,10 @@ export const useStudioStore = create((set) => ({
     return { files: updated, activeFileId: state.activeFileId || updated[0]?.id };
   }),
   setActiveFile: (activeFileId) => set({ activeFileId }),
+  removeFile: (id) => set((state) => ({
+    files: state.files.filter(f => f.id !== id),
+    activeFileId: state.activeFileId === id ? state.files.find(f => f.id !== id)?.id : state.activeFileId
+  })),
   updateFileStatus: (id, status) => set((state) => ({
     files: state.files.map(f => f.id === id ? { ...f, status } : f)
   })),
@@ -59,9 +66,17 @@ const PRESETS = [
     { name: 'Punchy', options: { exposure: 0.0, contrast: 1.25, saturation: 1.2, vibrance: 0.3, highlights: 0.1, shadows: -0.1 } },
 ];
 
+const POSITIONS = [
+    { id: 'top-left', label: 'TL' },
+    { id: 'top-right', label: 'TR' },
+    { id: 'bottom-left', label: 'BL' },
+    { id: 'bottom-right', label: 'BR' },
+    { id: 'center', label: 'C' },
+];
+
 // --- ENGINE ---
 import { isRawFile, decodeRawFile } from './engine/raw-decoder';
-import { runCompoundPipeline, processFile } from './engine/image-engine';
+import { runCompoundPipeline, processFile, applyTextWatermark, applyWatermark } from './engine/image-engine';
 import { getBasePreset, initPresets } from './engine/preset-loader';
 
 const processWebImage = async (canvas, options) => {
@@ -83,6 +98,14 @@ const processWebImage = async (canvas, options) => {
 
     runCompoundPipeline(imageData, basePreset, creativePreset, overrides);
     ctx.putImageData(imageData, 0, 0);
+
+    // Apply overlays to preview
+    if (options.logo) {
+        applyWatermark(canvas, options.logo, options.logo_pos, 0.8, options.logo_size / 100);
+    }
+    if (options.watermark_text) {
+        applyTextWatermark(canvas, options.watermark_text, options.watermark_pos, options.watermark_size / 100);
+    }
 };
 
 // --- UI COMPONENTS ---
@@ -108,6 +131,20 @@ const SidebarHeader = ({ icon: Icon, title }) => (
     </div>
 );
 
+const PositionPicker = ({ value, onChange }) => (
+    <div className="grid grid-cols-5 gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-900">
+        {POSITIONS.map(p => (
+            <button 
+                key={p.id}
+                onClick={() => onChange(p.id)}
+                className={`text-[8px] font-bold py-1.5 rounded transition-all ${value === p.id ? 'bg-blue-600 text-white shadow-lg' : 'text-zinc-600 hover:text-zinc-400'}`}
+            >
+                {p.label}
+            </button>
+        ))}
+    </div>
+);
+
 // --- MAIN APP ---
 function App() {
   const store = useStudioStore();
@@ -128,21 +165,24 @@ function App() {
 
     try {
         if (activeFile.file) {
+            console.log(`[App] Decoding ${activeFile.name}...`);
             if (isRawFile(activeFile.name)) {
-                const { imageData } = await decodeRawFile(activeFile.file, { fast: true });
-                canvas.width = imageData.width;
-                canvas.height = imageData.height;
-                ctx.putImageData(imageData, 0, 0);
-                processWebImage(canvas, store.options);
+                const decoded = await decodeRawFile(activeFile.file, { fast: true });
+                if (!decoded || !decoded.imageData) throw new Error("Decoder returned empty data");
+                
+                canvas.width = decoded.width;
+                canvas.height = decoded.height;
+                ctx.putImageData(decoded.imageData, 0, 0);
+                await processWebImage(canvas, store.options);
                 setPreviewLoading(false);
             } else {
                 const url = URL.createObjectURL(activeFile.file);
                 const img = new Image();
-                img.onload = () => {
+                img.onload = async () => {
                     canvas.width = img.width;
                     canvas.height = img.height;
                     ctx.drawImage(img, 0, 0);
-                    processWebImage(canvas, store.options);
+                    await processWebImage(canvas, store.options);
                     URL.revokeObjectURL(url);
                     setPreviewLoading(false);
                 };
@@ -170,6 +210,22 @@ function App() {
     input.click();
   };
 
+  const importLogo = async () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png';
+    input.onchange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const url = URL.createObjectURL(file);
+            const img = new Image();
+            img.onload = () => store.setOptions({ logo: img });
+            img.src = url;
+        }
+    };
+    input.click();
+  };
+
   const loadSample = async () => {
     try {
         setPreviewLoading(true);
@@ -193,16 +249,19 @@ function App() {
 
             try {
                 const canvas = await processFile(f.file, getBasePreset(), { id: 'temp', pipeline: [] }, {
-                    exposure: store.options.exposure,
+                    ...store.options,
                     contrast: (store.options.contrast - 1) * 100,
                     sat: store.options.saturation * 100,
                     vibrance: store.options.vibrance * 100,
                     highlights: store.options.highlights * 100,
                     shadows: store.options.shadows * 100,
                     noise_level: store.options.denoise ? 'medio' : 'none',
+                    logo_image: store.options.logo,
+                    logo_scale: store.options.logo_size,
+                    watermark_scale: store.options.watermark_size
                 });
 
-                const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+                const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.95));
                 const url = URL.createObjectURL(blob);
 
                 const link = document.createElement('a');
@@ -262,7 +321,7 @@ function App() {
         </div>
       )}
       
-      {/* Sidebar Controls - Mobile Responsive */}
+      {/* Sidebar Controls */}
       <aside className={`fixed inset-y-0 left-0 w-80 lg:relative lg:translate-x-0 z-40 border-r border-zinc-900 bg-[#08080A] flex flex-col shadow-2xl transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-6 lg:p-8 border-b border-zinc-900/50 bg-[#0A0A0C]">
           <div className="flex items-center justify-between">
@@ -311,16 +370,43 @@ function App() {
             <ControlSlider label="Saturation" value={store.options.saturation} min={0} max={2} step={0.01} onChange={(v) => store.setOptions({ saturation: v })} />
           </section>
 
-          <section>
-            <SidebarHeader icon={Zap} title="Branding" />
+          <section className="space-y-6">
+            <SidebarHeader icon={Zap} title="Watermark" />
             <div className="space-y-4">
                 <input 
                     type="text" 
-                    placeholder="TEXT WATERMARK"
+                    placeholder="TEXT OVERLAY"
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-[10px] font-bold focus:outline-none focus:border-blue-500/50 transition-all placeholder:text-zinc-700"
                     value={store.options.watermark_text}
                     onChange={(e) => store.setOptions({ watermark_text: e.target.value })}
                 />
+                <div className="space-y-3">
+                    <span className="text-[8px] font-black text-zinc-600 uppercase tracking-widest px-1">TEXT POSITION & SIZE</span>
+                    <PositionPicker value={store.options.watermark_pos} onChange={(v) => store.setOptions({ watermark_pos: v })} />
+                    <ControlSlider label="Text Size" value={store.options.watermark_size} min={1} max={10} step={0.1} onChange={(v) => store.setOptions({ watermark_size: v })} unit="%" />
+                </div>
+            </div>
+          </section>
+
+          <section className="space-y-6">
+            <SidebarHeader icon={ImageIcon} title="Logo Branding" />
+            <div className="space-y-4">
+                <button 
+                    onClick={importLogo}
+                    className={`w-full py-4 px-5 border rounded-xl text-[10px] font-black flex items-center justify-between group transition-all ${store.options.logo ? 'bg-blue-500/10 border-blue-500/40 text-blue-400' : 'bg-zinc-950 border-zinc-800 text-zinc-500 hover:border-blue-500/40'}`}
+                >
+                  <span className="flex items-center gap-3"><ImageIcon size={14} /> {store.options.logo ? 'LOGO LOADED' : 'UPLOAD PNG LOGO'}</span>
+                  {store.options.logo ? <CheckCircle2 size={12} /> : <Upload size={12} />}
+                </button>
+                
+                {store.options.logo && (
+                    <div className="space-y-3 animate-in fade-in slide-in-from-top-2">
+                        <span className="text-[8px] font-black text-zinc-600 uppercase tracking-widest px-1">LOGO POSITION & SCALE</span>
+                        <PositionPicker value={store.options.logo_pos} onChange={(v) => store.setOptions({ logo_pos: v })} />
+                        <ControlSlider label="Logo Scale" value={store.options.logo_size} min={5} max={50} step={1} onChange={(v) => store.setOptions({ logo_size: v })} unit="%" />
+                        <button onClick={() => store.setOptions({ logo: null })} className="w-full py-2 text-[8px] font-black text-red-500/50 hover:text-red-500 uppercase tracking-widest">Remove Logo</button>
+                    </div>
+                )}
             </div>
           </section>
         </div>
@@ -384,8 +470,15 @@ function App() {
                     </div>
                  </div>
                ) : (
-                 <div className="w-full h-full flex flex-col items-center justify-center relative">
-                    <canvas ref={canvasRef} className={`max-w-[95%] max-h-[90%] lg:max-w-[90%] lg:max-h-[85%] rounded-lg shadow-2xl transition-opacity duration-300 ${previewLoading ? 'opacity-30' : 'opacity-100'}`} />
+                 <div className="w-full h-full flex flex-col items-center justify-center relative p-4">
+                    <div className="relative group/canvas max-w-full max-h-full">
+                        <canvas ref={canvasRef} className={`max-w-full max-h-full rounded-lg shadow-2xl transition-opacity duration-300 ${previewLoading ? 'opacity-30' : 'opacity-100'}`} />
+                        {!previewLoading && (
+                            <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover/canvas:opacity-100 transition-opacity">
+                                <button onClick={() => store.removeFile(store.activeFileId)} className="p-2 bg-red-500/20 hover:bg-red-500 backdrop-blur text-white rounded-lg transition-all"><Trash2 size={16}/></button>
+                            </div>
+                        )}
+                    </div>
                     {previewLoading && <div className="absolute inset-0 flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={48} /></div>}
                  </div>
                )}
@@ -413,27 +506,31 @@ function App() {
             )}
           </div>
 
-          {/* Media Browser (Filmstrip) - Hidden on very small screens or scrollable */}
-          <div className="h-40 lg:h-auto lg:w-80 border-t lg:border-t-0 lg:border-l border-zinc-900/50 bg-[#08080A] flex flex-col">
+          {/* Media Browser (Filmstrip) */}
+          <div className="h-44 lg:h-auto lg:w-80 border-t lg:border-t-0 lg:border-l border-zinc-900/50 bg-[#08080A] flex flex-col shrink-0">
             <div className="hidden lg:block p-6 border-b border-zinc-900/50">
-                <h3 className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.3em]">Source Queue</h3>
+                <div className="flex items-center justify-between">
+                    <h3 className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.3em]">Source Queue</h3>
+                    <span className="text-[10px] font-bold text-zinc-700 bg-zinc-900 px-2 py-0.5 rounded-md">{store.files.length}</span>
+                </div>
             </div>
             <div className="flex-1 overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto p-4 flex lg:flex-col gap-3 custom-scrollbar">
               {store.files.map(f => (
-                <div key={f.id} className="min-w-[120px] lg:min-w-0">
+                <div key={f.id} className="min-w-[140px] lg:min-w-0 relative group">
                     <FileListItem
-                    file={f}
-                    isActive={store.activeFileId === f.id}
-                    onSelect={store.setActiveFile}
+                        file={f}
+                        isActive={store.activeFileId === f.id}
+                        onSelect={store.setActiveFile}
                     />
+                    <button onClick={(e) => { e.stopPropagation(); store.removeFile(f.id); }} className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity scale-75 hover:scale-100"><X size={10}/></button>
                 </div>
               ))}
               <button 
                 onClick={importFiles}
-                className="min-w-[120px] lg:min-w-0 p-4 lg:p-8 rounded-xl lg:rounded-2xl border-2 border-dashed border-zinc-900 hover:border-zinc-800 hover:bg-zinc-900/10 transition-all flex flex-col items-center justify-center gap-2"
+                className="min-w-[140px] lg:min-w-0 p-4 lg:p-8 rounded-xl lg:rounded-2xl border-2 border-dashed border-zinc-900 hover:border-zinc-800 hover:bg-zinc-900/10 transition-all flex flex-col items-center justify-center gap-2 text-zinc-700 hover:text-zinc-500"
               >
-                 <Upload size={16} className="text-zinc-700" />
-                 <span className="text-[8px] font-black text-zinc-700 uppercase tracking-widest">Add</span>
+                 <Upload size={16} />
+                 <span className="text-[8px] font-black uppercase tracking-widest">Add Files</span>
               </button>
             </div>
             
@@ -456,12 +553,12 @@ function App() {
                  <span className="hidden sm:inline">SYSTEM: ONLINE</span>
               </div>
               <div className="hidden sm:block h-3 w-[1px] bg-zinc-800" />
-              <span className="hidden md:inline">CLOUD DEPLOYMENT</span>
+              <span className="hidden md:inline text-zinc-500 uppercase">Production <span className="text-zinc-700">Cloud Build</span></span>
               <div className="h-3 w-[1px] bg-zinc-800" />
-              <span className="text-zinc-500">ENGINE: <span className="text-blue-500">CLOUD WASM</span></span>
+              <span className="text-zinc-500 uppercase">Engine: <span className="text-blue-500">Fast WASM v2</span></span>
            </div>
            <div className="flex items-center gap-4">
-                <span className="hidden sm:inline text-zinc-700">BUILD 2.6.0 CLOUD</span>
+                <span className="hidden sm:inline text-zinc-700">BUILD 2.6.5 CLOUD</span>
                 <button className="p-2 hover:bg-zinc-900 rounded-lg transition-colors"><Settings size={12} /></button>
            </div>
         </footer>
