@@ -702,13 +702,22 @@ export function applyWatermark(canvas, logoImage, position = 'bottom-right', opa
     const marginY = Math.round(canvas.height * padding);
 
     let x, y;
-    if (position.includes('bottom')) y = canvas.height - targetH - marginY;
-    else if (position.includes('top')) y = marginY;
-    else y = (canvas.height - targetH) / 2;
-
-    if (position.includes('right')) x = canvas.width - targetW - marginX;
-    else if (position.includes('left')) x = marginX;
-    else x = (canvas.width - targetW) / 2;
+    if (position === 'bottom-right') {
+        x = canvas.width - targetW - marginX;
+        y = canvas.height - targetH - marginY;
+    } else if (position === 'bottom-left') {
+        x = marginX;
+        y = canvas.height - targetH - marginY;
+    } else if (position === 'top-right') {
+        x = canvas.width - targetW - marginX;
+        y = marginY;
+    } else if (position === 'top-left') {
+        x = marginX;
+        y = marginY;
+    } else { // center
+        x = (canvas.width - targetW) / 2;
+        y = (canvas.height - targetH) / 2;
+    }
 
     ctx.globalAlpha = opacity;
     ctx.drawImage(logoImage, x, y, targetW, targetH);
@@ -721,12 +730,12 @@ export function applyWatermark(canvas, logoImage, position = 'bottom-right', opa
  * Apply text watermark onto canvas
  * Port of Pipeline.step_text_watermark()
  */
-export function applyTextWatermark(canvas, text = '', position = 'bottom-right') {
+export function applyTextWatermark(canvas, text = '', position = 'bottom-right', scale = 0.03) {
     if (!text) return canvas;
 
     const ctx = canvas.getContext('2d');
-    const fontSize = Math.round(canvas.width * 0.03);
-    ctx.font = `${fontSize}px Inter, Arial, sans-serif`;
+    const fontSize = Math.round(canvas.width * scale);
+    ctx.font = `900 ${fontSize}px Inter, Arial, sans-serif`;
 
     const margin = Math.round(canvas.width * 0.05);
     const metrics = ctx.measureText(text);
@@ -734,13 +743,22 @@ export function applyTextWatermark(canvas, text = '', position = 'bottom-right')
     const textH = fontSize;
 
     let x, y;
-    if (position.includes('left')) x = margin;
-    else if (position.includes('right')) x = canvas.width - textW - margin;
-    else x = (canvas.width - textW) / 2;
-
-    if (position.includes('top')) y = margin + textH;
-    else if (position.includes('bottom')) y = canvas.height - margin;
-    else y = (canvas.height + textH) / 2;
+    if (position === 'bottom-right') {
+        x = canvas.width - textW - margin;
+        y = canvas.height - margin;
+    } else if (position === 'bottom-left') {
+        x = margin;
+        y = canvas.height - margin;
+    } else if (position === 'top-right') {
+        x = canvas.width - textW - margin;
+        y = margin + textH;
+    } else if (position === 'top-left') {
+        x = margin;
+        y = margin + textH;
+    } else { // center
+        x = (canvas.width - textW) / 2;
+        y = (canvas.height + textH) / 2;
+    }
 
     // Shadow
     ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
@@ -788,7 +806,7 @@ export async function processFile(file, basePreset, creativePreset, overrides = 
 
     // Post-pipeline: text watermark
     if (overrides.watermark_text) {
-        applyTextWatermark(resultCanvas, overrides.watermark_text, overrides.watermark_pos || 'bottom-right');
+        applyTextWatermark(resultCanvas, overrides.watermark_text, overrides.watermark_pos || 'bottom-right', (overrides.watermark_scale || 3) / 100);
     }
 
     // Apply noise/vignette from overrides
