@@ -1,0 +1,9 @@
+{
+  "prompt": "A cute morning selfie of a stunning blonde woman with green eyes and pale skin, messy bed hair, wearing a simple white tank top, soft morning sunlight through a window, highly detailed, realistic, masterpiece, 8k",
+  "negative_prompt": "ugly, deformed, low quality, bad anatomy, extra fingers, cartoon, drawing, anime",
+  "steps": 20,
+  "cfg_scale": 7,
+  "width": 1024,
+  "height": 1024,
+  "sampler_name": "Euler a"
+}

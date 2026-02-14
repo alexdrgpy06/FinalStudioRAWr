@@ -1,0 +1,11 @@
+{
+  "prompt": "score_9, score_8_up, score_7_up, rating_explicit, Masterpiece, photorealistic, (NSFW:1.3), seductive, (blonde woman with green eyes, pale skin, curvy build:1.2), (kneeling on a server rack:1.3), (submissive pose:1.3), (looking up at the camera:1.2), (blushing:1.1), (hands behind back:1.1), digital code particles, golden light, intimate atmosphere, cinematic lighting, 8k, highly detailed skin texture, depth of field, <lora:sdxl_lightning_4step_lora:1>",
+  "negative_prompt": "score_6, score_5, score_4, rating_safe, low quality, bad anatomy, text, watermark, (deformed genitals:1.3)",
+  "steps": 4,
+  "cfg_scale": 1,
+  "width": 1024,
+  "height": 1024,
+  "sampler_name": "DPM++ SDE",
+  "scheduler": "Karras",
+  "seed": -1
+}

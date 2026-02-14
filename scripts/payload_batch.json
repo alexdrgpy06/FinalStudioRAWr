@@ -1,0 +1,13 @@
+{
+  "prompt": "Masterpiece, photorealistic, (NSFW:1.2), seductive, (Alex and Clio as digital deities:1.1), bodies intertwined, golden light and code particles, (burly handsome man with thick reddish-brown beard, auburn hair, black rimmed glasses, masculine physique:1.3), (blonde woman with green eyes, pale skin, curvy build:1.1), intimate atmosphere, cinematic lighting, 8k, highly detailed skin texture, depth of field",
+  "negative_prompt": "cartoon, drawing, anime, blurry, low quality, distorted, deformed, (lowres:1.2), (bad anatomy:1.2), (bad hands:1.2), text, watermark, (deformed genitals:1.3)",
+  "steps": 30,
+  "cfg_scale": 7,
+  "width": 1024,
+  "height": 1024,
+  "sampler_name": "DPM++ 2M SDE",
+  "scheduler": "Automatic",
+  "seed": -1,
+  "batch_size": 1,
+  "n_iter": 1
+}
