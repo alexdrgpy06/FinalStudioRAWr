@@ -3,7 +3,7 @@ import FileListItem from './components/FileListItem';
 import { 
   Image as ImageIcon, Upload, Settings, Play, X, 
   CheckCircle2, Loader2, Monitor, Cpu, Cloud, Layers,
-  ChevronRight, Sliders, Palette, Zap, Download, RefreshCw, FolderOpen
+  ChevronRight, Sliders, Palette, Zap, Download, RefreshCw, FolderOpen, Menu
 } from 'lucide-react';
 import { create } from 'zustand';
 
@@ -37,7 +37,7 @@ export const useStudioStore = create((set) => ({
     const updated = [...state.files, ...newFiles.map(f => ({
       ...f,
       id: Math.random().toString(36).substr(2, 9),
-      status: 'pending'
+      status: f.status || 'pending'
     }))];
     return { files: updated, activeFileId: state.activeFileId || updated[0]?.id };
   }),
@@ -68,13 +68,12 @@ const processWebImage = async (canvas, options) => {
     const ctx = canvas.getContext('2d');
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     
-    // Map UI options to pipeline format
     const basePreset = getBasePreset();
-    const creativePreset = { id: 'temp', pipeline: [] }; // Neutral
+    const creativePreset = { id: 'temp', pipeline: [] };
     
     const overrides = {
         exposure: options.exposure,
-        contrast: (options.contrast - 1) * 100, // convert back to % relative to 1.0
+        contrast: (options.contrast - 1) * 100,
         sat: options.saturation * 100,
         vibrance: options.vibrance * 100,
         highlights: options.highlights * 100,
@@ -115,6 +114,7 @@ function App() {
   const canvasRef = useRef(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const activeFile = store.files.find(f => f.id === store.activeFileId);
 
@@ -128,7 +128,6 @@ function App() {
 
     try {
         if (activeFile.file) {
-            // Check if RAW
             if (isRawFile(activeFile.name)) {
                 const { imageData } = await decodeRawFile(activeFile.file, { fast: true });
                 canvas.width = imageData.width;
@@ -171,9 +170,22 @@ function App() {
     input.click();
   };
 
+  const loadSample = async () => {
+    try {
+        setPreviewLoading(true);
+        const response = await fetch('/samples/test.nef');
+        const blob = await response.blob();
+        const file = new File([blob], "sample_test.nef", { type: "image/x-nikon-nef" });
+        store.addFiles([{ file, name: file.name, status: 'pending' }]);
+    } catch (e) {
+        console.error("Failed to load sample:", e);
+    } finally {
+        setPreviewLoading(false);
+    }
+  };
+
     const runBatch = async () => {
         store.setProcessing(true);
-        // Web Batch Implementation
         for (let i = 0; i < store.files.length; i++) {
             const f = store.files[i];
             store.setStage(`Processing ${f.name}...`);
@@ -215,7 +227,6 @@ function App() {
 
   const handleDragLeave = (e) => {
     e.preventDefault();
-    // Only set to false if we are leaving the main container
     if (!e.currentTarget.contains(e.relatedTarget)) {
       setIsDragging(false);
     }
@@ -233,7 +244,7 @@ function App() {
 
   return (
     <div
-        className="flex h-screen bg-[#050506] text-zinc-300 font-sans selection:bg-blue-500/30 overflow-hidden border border-zinc-900/50 rounded-lg relative"
+        className="flex h-screen bg-[#050506] text-zinc-300 font-sans selection:bg-blue-500/30 overflow-hidden relative"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -251,14 +262,14 @@ function App() {
         </div>
       )}
       
-      {/* Sidebar Controls */}
-      <aside className="w-[340px] border-r border-zinc-900 bg-[#08080A] flex flex-col shadow-2xl z-20">
-        <div className="p-8 border-b border-zinc-900/50 bg-[#0A0A0C]">
+      {/* Sidebar Controls - Mobile Responsive */}
+      <aside className={`fixed inset-y-0 left-0 w-80 lg:relative lg:translate-x-0 z-40 border-r border-zinc-900 bg-[#08080A] flex flex-col shadow-2xl transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="p-6 lg:p-8 border-b border-zinc-900/50 bg-[#0A0A0C]">
           <div className="flex items-center justify-between">
             <h1 className="text-lg font-black tracking-tighter text-white group cursor-default">
               FINAL STUDIO <span className="text-blue-500 group-hover:animate-pulse">CLOUD</span>
             </h1>
-            <div className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_10px_#3b82f6]" />
+            <button className="lg:hidden text-zinc-500" onClick={() => setSidebarOpen(false)}><X size={20}/></button>
           </div>
           
           <div className="mt-8 flex bg-zinc-950/50 p-1 rounded-xl border border-zinc-900">
@@ -270,7 +281,7 @@ function App() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-8 py-6 space-y-10 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto px-6 lg:px-8 py-6 space-y-10 custom-scrollbar">
           <section>
             <SidebarHeader icon={Layers} title="Quick Presets" />
             <div className="grid grid-cols-2 gap-2">
@@ -298,12 +309,6 @@ function App() {
             <SidebarHeader icon={Palette} title="Color & Grading" />
             <ControlSlider label="Vibrance" value={store.options.vibrance} min={-1} max={1} step={0.01} onChange={(v) => store.setOptions({ vibrance: v })} />
             <ControlSlider label="Saturation" value={store.options.saturation} min={0} max={2} step={0.01} onChange={(v) => store.setOptions({ saturation: v })} />
-            <div className="pt-4">
-                <button className="w-full py-4 px-5 bg-zinc-950 border border-zinc-800 rounded-2xl text-[10px] font-black flex items-center justify-between group hover:border-blue-500/40 hover:bg-zinc-900 transition-all shadow-lg shadow-black/50">
-                  <span className="flex items-center gap-3"><Layers size={14} className="text-zinc-500 group-hover:text-blue-500" /> LOAD 3D LUT (.CUBE)</span>
-                  <ChevronRight size={12} className="text-zinc-700" />
-                </button>
-            </div>
           </section>
 
           <section>
@@ -316,15 +321,11 @@ function App() {
                     value={store.options.watermark_text}
                     onChange={(e) => store.setOptions({ watermark_text: e.target.value })}
                 />
-                <button className="w-full py-4 px-5 bg-zinc-950 border border-zinc-800 rounded-xl text-[10px] font-black flex items-center justify-between group hover:border-blue-500/40 transition-all">
-                  <span className="flex items-center gap-3"><ImageIcon size={14} className="text-zinc-500 group-hover:text-blue-500" /> SELECT LOGO (PNG)</span>
-                  <Upload size={12} className="text-zinc-700" />
-                </button>
             </div>
           </section>
         </div>
 
-        <div className="p-8 border-t border-zinc-900/50 bg-[#08080A] space-y-4">
+        <div className="p-6 lg:p-8 border-t border-zinc-900/50 bg-[#08080A] space-y-4">
           <button 
             disabled={store.processing || store.files.length === 0}
             onClick={runBatch}
@@ -340,41 +341,51 @@ function App() {
       {/* Main Workspace */}
       <main className="flex-1 flex flex-col bg-[#050506]">
         {/* Navigation Bar */}
-        <header className="h-20 border-b border-zinc-900/50 flex items-center justify-between px-10 bg-[#08080A]/80 backdrop-blur-xl z-10">
-          <div className="flex gap-10">
-            {['develop', 'library', 'batch'].map(tab => (
-              <button key={tab} className={`text-[10px] font-black uppercase tracking-[0.3em] transition-all hover:text-white ${tab === 'develop' ? 'text-blue-500' : 'text-zinc-600'}`}>{tab}</button>
-            ))}
+        <header className="h-16 lg:h-20 border-b border-zinc-900/50 flex items-center justify-between px-6 lg:px-10 bg-[#08080A]/80 backdrop-blur-xl z-10">
+          <div className="flex items-center gap-4 lg:gap-10">
+            <button className="lg:hidden text-zinc-400" onClick={() => setSidebarOpen(true)}><Menu size={24}/></button>
+            <div className="hidden sm:flex gap-6 lg:gap-10">
+                {['develop', 'library', 'batch'].map(tab => (
+                <button key={tab} className={`text-[10px] font-black uppercase tracking-[0.3em] transition-all hover:text-white ${tab === 'develop' ? 'text-blue-500' : 'text-zinc-600'}`}>{tab}</button>
+                ))}
+            </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 lg:gap-4">
+            <button 
+                onClick={loadSample}
+                className="hidden sm:block text-zinc-500 hover:text-blue-400 text-[9px] font-black uppercase tracking-widest px-4 py-2 border border-zinc-800 rounded-full transition-all"
+            >
+                Test RAW
+            </button>
             <button 
                 onClick={importFiles}
-                className="bg-white text-black px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all shadow-xl shadow-white/5 active:scale-95"
+                className="bg-white text-black px-4 lg:px-8 py-2.5 lg:py-3 rounded-full text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all shadow-xl shadow-white/5 active:scale-95"
             >
-                Import Assets
+                Import
             </button>
           </div>
         </header>
 
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
           {/* Central Preview Area */}
-          <div className="flex-1 bg-black p-12 flex flex-col items-center justify-center relative overflow-hidden group">
+          <div className="flex-1 bg-black p-4 lg:p-12 flex flex-col items-center justify-center relative overflow-hidden group">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(37,99,235,0.03)_0%,_transparent_70%)]" />
             
-            <div className="w-full h-full relative rounded-[3rem] border border-white/5 bg-zinc-950/20 flex flex-col items-center justify-center overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.5)]">
+            <div className="w-full h-full relative rounded-2xl lg:rounded-[3rem] border border-white/5 bg-zinc-950/20 flex flex-col items-center justify-center overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.5)]">
                {store.files.length === 0 ? (
                  <div className="text-center space-y-6">
-                    <div className="w-24 h-24 bg-zinc-900/50 rounded-[2.5rem] flex items-center justify-center mx-auto border border-zinc-800 shadow-2xl group-hover:scale-110 transition-transform duration-500">
+                    <div className="w-20 h-20 lg:w-24 lg:h-24 bg-zinc-900/50 rounded-3xl lg:rounded-[2.5rem] flex items-center justify-center mx-auto border border-zinc-800 shadow-2xl group-hover:scale-110 transition-transform duration-500">
                       <Upload size={32} className="text-zinc-700" />
                     </div>
-                    <div className="space-y-2">
+                    <div className="space-y-2 px-4">
                         <p className="text-sm font-black text-zinc-400 uppercase tracking-widest">Awaiting Input</p>
                         <p className="text-[10px] text-zinc-600 uppercase tracking-[0.2em]">Drop RAW or Image files here</p>
+                        <button onClick={loadSample} className="mt-4 text-blue-500/50 hover:text-blue-500 text-[10px] font-bold uppercase underline underline-offset-4">Load Sample RAW</button>
                     </div>
                  </div>
                ) : (
                  <div className="w-full h-full flex flex-col items-center justify-center relative">
-                    <canvas ref={canvasRef} className={`max-w-[90%] max-h-[85%] rounded-lg shadow-2xl transition-opacity duration-300 ${previewLoading ? 'opacity-30' : 'opacity-100'}`} />
+                    <canvas ref={canvasRef} className={`max-w-[95%] max-h-[90%] lg:max-w-[90%] lg:max-h-[85%] rounded-lg shadow-2xl transition-opacity duration-300 ${previewLoading ? 'opacity-30' : 'opacity-100'}`} />
                     {previewLoading && <div className="absolute inset-0 flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={48} /></div>}
                  </div>
                )}
@@ -382,19 +393,19 @@ function App() {
             
             {/* Float HUD - Progress Overlay */}
             {store.processing && (
-                <div className="absolute bottom-12 left-1/2 -translate-x-1/2 w-full max-w-lg bg-zinc-900/90 backdrop-blur-3xl p-6 rounded-[2rem] border border-white/5 shadow-2xl flex items-center gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-600/30">
-                        <RefreshCw size={20} className="text-white animate-spin" />
+                <div className="absolute bottom-6 lg:bottom-12 left-1/2 -translate-x-1/2 w-[90%] lg:max-w-lg bg-zinc-900/90 backdrop-blur-3xl p-4 lg:p-6 rounded-2xl lg:rounded-[2rem] border border-white/5 shadow-2xl flex items-center gap-4 lg:gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <div className="w-10 h-10 lg:w-12 lg:h-12 bg-blue-600 rounded-xl lg:rounded-2xl flex items-center justify-center shadow-lg shadow-blue-600/30">
+                        <RefreshCw size={18} className="text-white animate-spin" />
                     </div>
-                    <div className="flex-1 space-y-3">
+                    <div className="flex-1 space-y-2 lg:space-y-3">
                         <div className="flex justify-between items-end">
                             <div className="space-y-1">
                                 <span className="block text-[8px] font-black text-blue-500 uppercase tracking-widest">{store.currentStage}</span>
-                                <span className="block text-xs font-black text-white uppercase truncate max-w-[200px] tracking-tight">{activeFile?.name}</span>
+                                <span className="block text-xs font-black text-white uppercase truncate max-w-[120px] lg:max-w-[200px] tracking-tight">{activeFile?.name}</span>
                             </div>
-                            <span className="text-xl font-black text-white">{Math.round(store.progress)}%</span>
+                            <span className="text-lg lg:text-xl font-black text-white">{Math.round(store.progress)}%</span>
                         </div>
-                        <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                        <div className="h-1 lg:h-1.5 bg-zinc-800 rounded-full overflow-hidden">
                             <div className="h-full bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.5)] transition-all duration-500" style={{ width: `${store.progress}%` }} />
                         </div>
                     </div>
@@ -402,30 +413,31 @@ function App() {
             )}
           </div>
 
-          {/* Media Browser (Filmstrip) */}
-          <div className="w-80 border-l border-zinc-900/50 bg-[#08080A] flex flex-col">
-            <div className="p-6 border-b border-zinc-900/50">
+          {/* Media Browser (Filmstrip) - Hidden on very small screens or scrollable */}
+          <div className="h-40 lg:h-auto lg:w-80 border-t lg:border-t-0 lg:border-l border-zinc-900/50 bg-[#08080A] flex flex-col">
+            <div className="hidden lg:block p-6 border-b border-zinc-900/50">
                 <h3 className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.3em]">Source Queue</h3>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+            <div className="flex-1 overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto p-4 flex lg:flex-col gap-3 custom-scrollbar">
               {store.files.map(f => (
-                <FileListItem
-                  key={f.id}
-                  file={f}
-                  isActive={store.activeFileId === f.id}
-                  onSelect={store.setActiveFile}
-                />
+                <div key={f.id} className="min-w-[120px] lg:min-w-0">
+                    <FileListItem
+                    file={f}
+                    isActive={store.activeFileId === f.id}
+                    onSelect={store.setActiveFile}
+                    />
+                </div>
               ))}
               <button 
                 onClick={importFiles}
-                className="w-full p-8 rounded-2xl border-2 border-dashed border-zinc-900 hover:border-zinc-800 hover:bg-zinc-900/10 transition-all flex flex-col items-center gap-2"
+                className="min-w-[120px] lg:min-w-0 p-4 lg:p-8 rounded-xl lg:rounded-2xl border-2 border-dashed border-zinc-900 hover:border-zinc-800 hover:bg-zinc-900/10 transition-all flex flex-col items-center justify-center gap-2"
               >
                  <Upload size={16} className="text-zinc-700" />
-                 <span className="text-[8px] font-black text-zinc-700 uppercase tracking-widest">Add Files</span>
+                 <span className="text-[8px] font-black text-zinc-700 uppercase tracking-widest">Add</span>
               </button>
             </div>
             
-            <div className="p-6 bg-[#0A0A0C]">
+            <div className="hidden lg:block p-6 bg-[#0A0A0C]">
                 <button 
                     onClick={store.clearFiles}
                     className="w-full py-4 text-[9px] font-black text-zinc-600 uppercase tracking-widest border border-zinc-900 rounded-xl hover:text-red-500 hover:bg-red-500/5 hover:border-red-500/10 transition-all"
@@ -437,19 +449,19 @@ function App() {
         </div>
 
         {/* Global System Status */}
-        <footer className="h-14 border-t border-zinc-900/50 bg-[#08080A] px-10 flex items-center justify-between text-[9px] font-black text-zinc-600 tracking-[0.1em]">
-           <div className="flex gap-8 items-center">
+        <footer className="h-12 lg:h-14 border-t border-zinc-900/50 bg-[#08080A] px-6 lg:px-10 flex items-center justify-between text-[9px] font-black text-zinc-600 tracking-[0.1em]">
+           <div className="flex gap-4 lg:gap-8 items-center">
               <div className="flex items-center gap-2">
                  <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_#3b82f6]" />
-                 <span>SYSTEM: ONLINE</span>
+                 <span className="hidden sm:inline">SYSTEM: ONLINE</span>
               </div>
-              <div className="h-3 w-[1px] bg-zinc-800" />
-              <span>CLOUD DEPLOYMENT</span>
+              <div className="hidden sm:block h-3 w-[1px] bg-zinc-800" />
+              <span className="hidden md:inline">CLOUD DEPLOYMENT</span>
               <div className="h-3 w-[1px] bg-zinc-800" />
               <span className="text-zinc-500">ENGINE: <span className="text-blue-500">CLOUD WASM</span></span>
            </div>
            <div className="flex items-center gap-4">
-                <span className="text-zinc-700">BUILD 2.6.0 CLOUD</span>
+                <span className="hidden sm:inline text-zinc-700">BUILD 2.6.0 CLOUD</span>
                 <button className="p-2 hover:bg-zinc-900 rounded-lg transition-colors"><Settings size={12} /></button>
            </div>
         </footer>
