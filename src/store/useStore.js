@@ -14,7 +14,8 @@ export const useStore = create((set) => ({
       file: f.file || null,
       path: f.path || null,
       name: f.name || (f.file ? f.file.name : 'Unknown'),
-      id: Math.random().toString(36).substr(2, 9),
+      // Sentinel: Use crypto.randomUUID() for secure ID generation
+      id: crypto.randomUUID(),
       status: 'pending'
     }))] 
   })),

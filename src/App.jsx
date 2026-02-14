@@ -39,7 +39,8 @@ export const useStudioStore = create((set) => ({
   addFiles: (newFiles) => set((state) => {
     const updated = [...state.files, ...newFiles.map(f => ({
       ...f,
-      id: Math.random().toString(36).substr(2, 9),
+      // Sentinel: Use crypto.randomUUID() for secure ID generation
+      id: crypto.randomUUID(),
       status: f.status || 'pending'
     }))];
     return { files: updated, activeFileId: state.activeFileId || updated[0]?.id };
