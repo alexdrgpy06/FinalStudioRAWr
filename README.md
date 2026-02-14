@@ -1,44 +1,33 @@
-# FinalStudioRAWr 📸
+# FinalStudio Cloud ☁️
 
-**FinalStudioRAWr** is a high-performance, dual-engine image processor designed for professional photographers. It combines the power of a **Native GPU Engine (Rust/WGPU)** for maximum performance on desktop with a **Browser Web Engine (WASM/JS)** for seamless accessibility and cloud preview.
+**FinalStudio Cloud** is a lightweight, high-performance web-only image processor derived from FinalStudioRAWr. It is optimized for **Vercel deployment** and focuses exclusively on the **Browser Web Engine (WASM/JS)** for fast, accessible image processing without the need for a desktop installation.
 
 ## 🚀 Key Features
 
-- **Dual-Engine Architecture:** Automatically switches between Native (via Tauri) and Web (via LibRaw-WASM) for the best possible experience.
-- **Fast RAW Decoding:** Custom half-size demosaicing in Rust and optimized WASM decoding for instant previews.
-- **Professional Pipeline:** Exposure normalization, Tone curves, HSL, Color Grading, 3D LUT support, and Shadow/Highlight recovery.
-- **Batch Processing:** High-speed parallel export using all CPU cores.
-- **Vercel Ready:** Deploy the web version instantly to the cloud.
+- **WASM-Powered Core:** High-performance RAW decoding and image processing using LibRaw-WASM and optimized JavaScript.
+- **Vercel Optimized:** Extremely lightweight architecture designed for fast loading and low-latency processing in the cloud.
+- **Professional Pipeline:** Full support for Exposure, Tone Curves, HSL, Color Grading, and 3D LUTs entirely in the browser.
+- **Privacy First:** All processing happens locally in your browser's Web Workers. No images are uploaded to any server.
+- **Batch Processing:** Parallel processing using Browser Web Workers.
 
 ## 🛠️ Technology Stack
 
 - **Frontend:** React 18+, Tailwind CSS, Zustand, Lucide Icons.
-- **Native Core:** Rust, Tauri v2, Rayon (Parallelism), Image-rs.
-- **Web Core:** Web Workers, LibRaw-WASM, Canvas API.
+- **Engine:** Web Workers, LibRaw-WASM, Canvas API.
+- **Deployment:** Vercel / Vite.
 
-## 📦 Project Structure
+## 📦 Changes from RAWr Version
 
-- `src-tauri/`: Rust backend and Tauri configuration.
-- `src/`: React frontend source.
-  - `engine/`: Shared image processing logic (JS/WASM).
-  - `storage/`: Local persistence (IndexedDB).
-- `public/`: Static assets (Presets, LUTs).
+- Removed Tauri/Native GPU engine for minimal bundle size.
+- Streamlined UI to focus on cloud/web workflows.
+- Simplified processing bridge (Cloud-only).
+- Removed desktop-specific dependencies and local file system hooks.
 
-## 🚀 Getting Started
+## 🚀 Deployment
 
-### Native Desktop (Tauri)
-1. Install Rust and Node.js.
-2. Run `npm install`.
-3. Run `npm run tauri dev`.
-
-### Web Deployment (Vercel)
-1. Push to GitHub.
-2. Connect to Vercel.
-3. Done! (The `vercel.json` and `vite.config.js` are already optimized for production).
-
-## 📜 Documentation
-
-Detailed technical documentation can be found in [DOCS.md](./DOCS.md).
+1. Push this branch (`cloud-only`) to GitHub.
+2. Deploy the directory to Vercel.
+3. The `vercel.json` provides necessary COOP/COEP headers for WASM memory isolation.
 
 ---
 © 2026 FinalStudio Team
