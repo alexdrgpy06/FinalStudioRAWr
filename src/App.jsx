@@ -10,7 +10,7 @@ import Filmstrip from './components/Filmstrip';
 
 // --- Engine imports ---
 import { runCompoundPipeline, applyTextWatermark, applyWatermark, resizeCanvas, loadImageFromFile, stepVignette, stepGrain, stepSharpen } from './engine/image-engine';
-import { getBasePreset, initPresets, listPresets } from './engine/preset-loader';
+import { getBasePreset, initPresets } from './engine/preset-loader';
 import { loadLUTFile, applyHaldCLUT } from './engine/lut-processor';
 
 // --- Lazy RAW ---
@@ -146,14 +146,14 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [sidebar, setSidebar] = useState(false);
-  const [enginePresets, setEnginePresets] = useState([]);
+  const [thumbVersion, setThumbVersion] = useState(0);
   const debRef = useRef(null);
   const firstRef = useRef(true);
 
   const active = store.files.find(f => f.id === store.activeFileId);
 
   // Init presets
-  useEffect(() => { initPresets().then(() => setEnginePresets(listPresets())).catch(console.error); }, []);
+  useEffect(() => { initPresets().catch(console.error); }, []);
 
   // ─── PREVIEW ────────────────────────────────────────────
   const renderPreview = useCallback(async () => {
@@ -164,17 +164,23 @@ function App() {
     try {
       store.setPreviewProgress(15);
       const thumb = await getThumbnail(active);
+      setThumbVersion(v => v + 1);
       store.setPreviewProgress(50);
       const cloned = new ImageData(new Uint8ClampedArray(thumb.imageData.data), thumb.width, thumb.height);
-      applyPipeline(cloned, store.options);
+      // Skip processing in compare (before) mode
+      if (!store.compareMode) {
+        applyPipeline(cloned, store.options);
+      }
       store.setPreviewProgress(85);
       const canvas = canvasRef.current;
       canvas.width = thumb.width;
       canvas.height = thumb.height;
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       ctx.putImageData(cloned, 0, 0);
-      if (store.options.logo) applyWatermark(canvas, store.options.logo, store.options.logo_pos, 0.8, store.options.logo_size / 100);
-      if (store.options.watermark_text) applyTextWatermark(canvas, store.options.watermark_text, store.options.watermark_pos, store.options.watermark_size / 100);
+      if (!store.compareMode) {
+        if (store.options.logo) applyWatermark(canvas, store.options.logo, store.options.logo_pos, 0.8, store.options.logo_size / 100);
+        if (store.options.watermark_text) applyTextWatermark(canvas, store.options.watermark_text, store.options.watermark_pos, store.options.watermark_size / 100);
+      }
       store.setPreviewProgress(100);
     } catch (e) {
       console.error("[Preview]", e);
@@ -182,7 +188,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [active, store.options]);
+  }, [active, store.options, store.compareMode]);
 
   // Debounced preview
   useEffect(() => {
@@ -273,6 +279,24 @@ function App() {
   const onDragLeave = (e) => { e.preventDefault(); if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false); };
   const onDrop = (e) => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files?.length) store.addFiles(Array.from(e.dataTransfer.files).map(f => ({ file: f, name: f.name }))); };
 
+  // Pre-generate thumbnails for all queued files
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      for (const f of store.files) {
+        if (cancelled) break;
+        if (thumbCache.has(f.id)) continue;
+        try {
+          await getThumbnail(f);
+          if (!cancelled) setThumbVersion(v => v + 1);
+        } catch (e) {
+          console.warn(`[Thumb] Failed for ${f.name}:`, e.message);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [store.files]);
+
   const removeActive = () => {
     if (store.activeFileId) {
       thumbCache.delete(store.activeFileId);
@@ -297,7 +321,6 @@ function App() {
         visible={sidebar}
         onClose={() => setSidebar(false)}
         hasActiveFile={!!active}
-        enginePresets={enginePresets}
         onImportLogo={importLogo}
         onImportLUT={importLUT}
         onExportCurrent={exportCurrent}
@@ -317,11 +340,12 @@ function App() {
             loading={loading}
             onExportCurrent={exportCurrent}
             onRemoveActive={removeActive}
-            thumbCache={thumbCache}
+            onImport={importFiles}
           />
 
           <Filmstrip
             thumbCache={thumbCache}
+            thumbVersion={thumbVersion}
             onImport={importFiles}
             onExport={exportOne}
             onRemove={(id) => { thumbCache.delete(id); store.removeFile(id); }}
