@@ -63,14 +63,13 @@ export async function decodeRawFile(file, options = {}) {
             halfSize: !!fast,
             useCameraWb: true,
             useAutoWb: false,
-            bright: 1.1,
+            bright: 1.2,
             outputColor: 1, 
-            outputBps: 16, // Use 16-bit for internal decoding to preserve detail
-            noAutoBright: true
+            outputBps: 16,
+            noAutoBright: false
         });
 
-        // High-level open() should handle the pipeline, but some versions need explicit steps.
-        // We ensure dcraw_process is called if imageData() is empty.
+        const meta = await raw.metadata();
         let data = await raw.imageData();
         if (!data || data.length === 0) {
             console.log("[RAW] Data empty, triggering manual process...");

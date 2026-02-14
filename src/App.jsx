@@ -61,7 +61,7 @@ const PRESETS = [
 
 // --- ENGINE ---
 import { isRawFile, decodeRawFile } from './engine/raw-decoder';
-import { runCompoundPipeline, processFile } from './engine/image-engine';
+import { runCompoundPipeline, processFile, applyWatermark, applyTextWatermark } from './engine/image-engine';
 import { getBasePreset, initPresets } from './engine/preset-loader';
 
 const processWebImage = async (canvas, options) => {
@@ -85,10 +85,22 @@ const processWebImage = async (canvas, options) => {
         highlights: (options.highlights || 0) * 100,
         shadows: (options.shadows || 0) * 100,
         noise_level: options.denoise ? 'medio' : 'none',
+        watermark_text: options.watermark_text,
+        logo_image: options.logo,
+        logo_pos: options.logo_pos,
+        logo_scale: options.logo_scale
     };
 
     runCompoundPipeline(imageData, basePreset, creativePreset, overrides);
     ctx.putImageData(imageData, 0, 0);
+
+    // Apply branding post-pipeline for preview (mirrors processFile)
+    if (overrides.logo_image) {
+        applyWatermark(canvas, overrides.logo_image, overrides.logo_pos || 'bottom-right', 0.8, (overrides.logo_scale || 20) / 100);
+    }
+    if (overrides.watermark_text) {
+        applyTextWatermark(canvas, overrides.watermark_text, overrides.logo_pos || 'bottom-right');
+    }
 };
 
 // --- UI COMPONENTS ---
@@ -340,6 +352,53 @@ function App() {
                     value={store.options.watermark_text}
                     onChange={(e) => store.setOptions({ watermark_text: e.target.value })}
                 />
+                
+                <div className="flex flex-col gap-3">
+                    <div className="flex justify-between items-center px-1">
+                        <span className="text-[9px] font-black uppercase text-zinc-500 tracking-[0.15em]">Logo Watermark</span>
+                        {store.options.logo && <button onClick={() => store.setOptions({ logo: null })} className="text-[8px] text-red-500 font-bold uppercase">Remove</button>}
+                    </div>
+                    <button 
+                        onClick={() => {
+                            const input = document.createElement('input');
+                            input.type = 'file';
+                            input.accept = 'image/*';
+                            input.onchange = (e) => {
+                                const file = e.target.files[0];
+                                if (file) {
+                                    const reader = new FileReader();
+                                    reader.onload = (re) => {
+                                        const img = new Image();
+                                        img.onload = () => store.setOptions({ logo: img });
+                                        img.src = re.target.result;
+                                    };
+                                    reader.readAsDataURL(file);
+                                }
+                            };
+                            input.click();
+                        }}
+                        className="w-full py-4 bg-zinc-900 border border-zinc-800 rounded-xl text-[9px] font-black uppercase text-zinc-400 hover:bg-zinc-800 transition-all"
+                    >
+                        {store.options.logo ? 'Change Logo' : 'Upload Logo'}
+                    </button>
+                    
+                    {store.options.logo && (
+                        <>
+                            <ControlSlider label="Logo Scale" value={store.options.logo_scale || 20} min={5} max={50} step={1} onChange={(v) => store.setOptions({ logo_scale: v })} unit="%" />
+                            <div className="grid grid-cols-2 gap-2">
+                                {['top-left', 'top-right', 'bottom-left', 'bottom-right'].map(pos => (
+                                    <button 
+                                        key={pos}
+                                        onClick={() => store.setOptions({ logo_pos: pos })}
+                                        className={`py-2 text-[8px] font-black uppercase rounded-lg border transition-all ${store.options.logo_pos === pos ? 'bg-blue-600 border-blue-500 text-white' : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:border-zinc-700'}`}
+                                    >
+                                        {pos.replace('-', ' ')}
+                                    </button>
+                                ))}
+                            </div>
+                        </>
+                    )}
+                </div>
             </div>
           </section>
         </div>
