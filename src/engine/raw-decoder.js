@@ -63,20 +63,19 @@ export async function decodeRawFile(file, options = {}) {
             halfSize: !!fast,
             useCameraWb: true,
             useAutoWb: false,
-            bright: 1.2,
+            bright: 1.5, // Increased boost
             outputColor: 1, 
             outputBps: 16,
-            noAutoBright: false
+            noAutoBright: false,
+            autoBrightThr: 0.01 // Help find content in dark RAWs
         });
+
+        // Force explicit processing steps
+        await raw.runFn("unpack");
+        await raw.runFn("dcraw_process");
 
         const meta = await raw.metadata();
         let data = await raw.imageData();
-        if (!data || data.length === 0) {
-            console.log("[RAW] Data empty, triggering manual process...");
-            await raw.runFn("unpack");
-            await raw.runFn("dcraw_process");
-            data = await raw.imageData();
-        }
 
         if (!data || !meta) {
             throw new Error("Failed to decode data from LibRaw");

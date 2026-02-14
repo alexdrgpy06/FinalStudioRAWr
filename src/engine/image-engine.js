@@ -322,6 +322,7 @@ function boxBlur(data, width, height, radius) {
         let rSum = 0, gSum = 0, bSum = 0;
         const rowOffset = y * width * 4;
         
+        // Correct initial window logic
         for (let dx = -radius; dx <= radius; dx++) {
             const nx = Math.min(Math.max(dx, 0), width - 1);
             const idx = rowOffset + nx * 4;
