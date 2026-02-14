@@ -40,16 +40,18 @@ export async function decodeRawFile(file, options = {}) {
     const raw = new LibRaw();
 
     try {
+        // Higher quality settings for decoding
         await raw.open(uint8, {
             halfSize: !!fast,
             useCameraWb: true,
             useAutoWb: false,
             bright: 1.0,
             outputColor: 1, // sRGB
-            outputBps: 8
+            outputBps: 16, // Use 16-bit internal processing if possible
+            noAutoScale: false,
+            userQual: 3, // AHD demosaicing (better quality than default)
         });
 
-        // Ensure unpack and processing are called
         await raw.unpack();
         await raw.dcraw_process();
 
@@ -64,11 +66,14 @@ export async function decodeRawFile(file, options = {}) {
         const height = meta.height;
         const rgbaData = new Uint8ClampedArray(width * height * 4);
 
+        // Optimized conversion loop
         for (let i = 0; i < width * height; i++) {
-            rgbaData[i * 4]     = data[i * 3];
-            rgbaData[i * 4 + 1] = data[i * 3 + 1];
-            rgbaData[i * 4 + 2] = data[i * 3 + 2];
-            rgbaData[i * 4 + 3] = 255;
+            const i3 = i * 3;
+            const i4 = i * 4;
+            rgbaData[i4]     = data[i3];
+            rgbaData[i4 + 1] = data[i3 + 1];
+            rgbaData[i4 + 2] = data[i3 + 2];
+            rgbaData[i4 + 3] = 255;
         }
 
         if (raw.worker) raw.worker.terminate();
