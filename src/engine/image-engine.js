@@ -310,34 +310,34 @@ export function stepLocalContrast(imageData, params = {}) {
     return imageData;
 }
 
-/** Optimized box blur using sliding window with Float32 intermediate for precision */
+/** Optimized box blur using sliding window with Float32 intermediate for precision and shared memory access */
 function boxBlur(data, width, height, radius) {
     if (radius < 1) return data;
     const out = new Uint8ClampedArray(data.length);
     const temp = new Float32Array(data.length);
     const count = radius * 2 + 1;
+    const invCount = 1.0 / count;
 
     // Horizontal pass
     for (let y = 0; y < height; y++) {
         let rSum = 0, gSum = 0, bSum = 0;
         const rowOffset = y * width * 4;
         
-        // Correct initial window logic
         for (let dx = -radius; dx <= radius; dx++) {
-            const nx = Math.min(Math.max(dx, 0), width - 1);
+            const nx = dx < 0 ? 0 : (dx >= width ? width - 1 : dx);
             const idx = rowOffset + nx * 4;
             rSum += data[idx]; gSum += data[idx + 1]; bSum += data[idx + 2];
         }
         
         for (let x = 0; x < width; x++) {
             const idx = rowOffset + x * 4;
-            temp[idx] = rSum / count;
-            temp[idx + 1] = gSum / count;
-            temp[idx + 2] = bSum / count;
+            temp[idx] = rSum * invCount;
+            temp[idx + 1] = gSum * invCount;
+            temp[idx + 2] = bSum * invCount;
             temp[idx + 3] = 255;
             
-            const prevX = Math.max(x - radius, 0);
-            const nextX = Math.min(x + radius + 1, width - 1);
+            const prevX = (x - radius) < 0 ? 0 : (x - radius);
+            const nextX = (x + radius + 1) >= width ? width - 1 : (x + radius + 1);
             rSum += data[rowOffset + nextX * 4] - data[rowOffset + prevX * 4];
             gSum += data[rowOffset + nextX * 4 + 1] - data[rowOffset + prevX * 4 + 1];
             bSum += data[rowOffset + nextX * 4 + 2] - data[rowOffset + prevX * 4 + 2];
@@ -349,20 +349,20 @@ function boxBlur(data, width, height, radius) {
         let rSum = 0, gSum = 0, bSum = 0;
         
         for (let dy = -radius; dy <= radius; dy++) {
-            const ny = Math.min(Math.max(dy, 0), height - 1);
+            const ny = dy < 0 ? 0 : (dy >= height ? height - 1 : dy);
             const idx = (ny * width + x) * 4;
             rSum += temp[idx]; gSum += temp[idx + 1]; bSum += temp[idx + 2];
         }
         
         for (let y = 0; y < height; y++) {
             const idx = (y * width + x) * 4;
-            out[idx] = Math.round(rSum / count);
-            out[idx + 1] = Math.round(gSum / count);
-            out[idx + 2] = Math.round(bSum / count);
+            out[idx] = (rSum * invCount + 0.5) | 0;
+            out[idx + 1] = (gSum * invCount + 0.5) | 0;
+            out[idx + 2] = (bSum * invCount + 0.5) | 0;
             out[idx + 3] = 255;
             
-            const prevY = Math.max(y - radius, 0);
-            const nextY = Math.min(y + radius + 1, height - 1);
+            const prevY = (y - radius) < 0 ? 0 : (y - radius);
+            const nextY = (y + radius + 1) >= height ? height - 1 : (y + radius + 1);
             rSum += temp[(nextY * width + x) * 4] - temp[(prevY * width + x) * 4];
             gSum += temp[(nextY * width + x) * 4 + 1] - temp[(prevY * width + x) * 4 + 1];
             bSum += temp[(nextY * width + x) * 4 + 2] - temp[(prevY * width + x) * 4 + 2];
@@ -468,7 +468,7 @@ export function stepSharpen(imageData, params = {}) {
 
 /**
  * User Adjustments — Lightroom-style manual adjustments
- * Port of Pipeline.step_user_adjustments()
+ * Optimized for speed and quality with pre-calculated masks
  */
 export function stepUserAdjustments(imageData, cfg = {}) {
     if (!cfg) return imageData;
@@ -490,96 +490,53 @@ export function stepUserAdjustments(imageData, cfg = {}) {
     const ch = imageDataToFloat(imageData);
     const len = ch.r.length;
 
-    // To linear
     const linR = new Float32Array(len);
     const linG = new Float32Array(len);
     const linB = new Float32Array(len);
-
-    for (let i = 0; i < len; i++) {
-        linR[i] = toLinear(ch.r[i]);
-        linG[i] = toLinear(ch.g[i]);
-        linB[i] = toLinear(ch.b[i]);
-    }
-
-    // Exposure
-    if (exposure !== 0) {
-        const expGain = Math.pow(2, exposure);
-        for (let i = 0; i < len; i++) {
-            linR[i] *= expGain;
-            linG[i] *= expGain;
-            linB[i] *= expGain;
-        }
-    }
-
-    // Luminance for masked adjustments
     const lum = new Float32Array(len);
+
+    const expGain = Math.pow(2, exposure);
+
     for (let i = 0; i < len; i++) {
-        lum[i] = luminance(linR[i], linG[i], linB[i]);
+        const r = toLinear(ch.r[i]) * expGain;
+        const g = toLinear(ch.g[i]) * expGain;
+        const b = toLinear(ch.b[i]) * expGain;
+        linR[i] = r; linG[i] = g; linB[i] = b;
+        lum[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     }
 
-    // Highlights
-    if (highlights !== 0) {
-        const factor = 1.0 + highlights / 200.0;
-        for (let i = 0; i < len; i++) {
-            const m = smoothmask(lum[i], 0.4, 0.8);
-            const mult = 1.0 + (factor - 1.0) * m;
-            linR[i] *= mult; linG[i] *= mult; linB[i] *= mult;
-        }
-    }
+    const hf = 1.0 + highlights / 200.0;
+    const sf = 1.0 + shadows / 200.0;
+    const wf = 1.0 + whites / 100.0;
+    const bf = 1.0 + blacks / 100.0;
 
-    // Shadows
-    if (shadows !== 0) {
-        const factor = 1.0 + shadows / 200.0;
-        for (let i = 0; i < len; i++) {
-            const m = 1.0 - smoothmask(lum[i], 0.0, 0.25);
-            const mult = 1.0 + (factor - 1.0) * m;
-            linR[i] *= mult; linG[i] *= mult; linB[i] *= mult;
-        }
-    }
-
-    // Whites
-    if (whites !== 0) {
-        const factor = 1.0 + whites / 100.0;
-        for (let i = 0; i < len; i++) {
-            const m = smoothmask(lum[i], 0.75, 1.0);
-            const mult = 1.0 + (factor - 1.0) * m;
-            linR[i] *= mult; linG[i] *= mult; linB[i] *= mult;
-        }
-    }
-
-    // Blacks
-    if (blacks !== 0) {
-        const factor = 1.0 + blacks / 100.0;
-        for (let i = 0; i < len; i++) {
-            const m = 1.0 - smoothmask(lum[i], 0.0, 0.1);
-            const mult = 1.0 + (factor - 1.0) * m;
-            linR[i] *= mult; linG[i] *= mult; linB[i] *= mult;
-        }
-    }
-
-    // Soft clip
     for (let i = 0; i < len; i++) {
-        if (linR[i] > 1.0) linR[i] = 1.0 + (1.0 - Math.exp(-(linR[i] - 1.0)));
-        if (linG[i] > 1.0) linG[i] = 1.0 + (1.0 - Math.exp(-(linG[i] - 1.0)));
-        if (linB[i] > 1.0) linB[i] = 1.0 + (1.0 - Math.exp(-(linB[i] - 1.0)));
-    }
+        const l = lum[i];
+        let mult = 1.0;
+        
+        // Combined Masking
+        if (highlights !== 0) mult *= (1.0 + (hf - 1.0) * smoothmask(l, 0.4, 0.8));
+        if (shadows !== 0) mult *= (1.0 + (sf - 1.0) * (1.0 - smoothmask(l, 0.0, 0.25)));
+        if (whites !== 0) mult *= (1.0 + (wf - 1.0) * smoothmask(l, 0.75, 1.0));
+        if (blacks !== 0) mult *= (1.0 + (bf - 1.0) * (1.0 - smoothmask(l, 0.0, 0.1)));
 
-    // Back to sRGB
-    for (let i = 0; i < len; i++) {
-        ch.r[i] = toSRGB(clamp(linR[i], 0, 1));
-        ch.g[i] = toSRGB(clamp(linG[i], 0, 1));
-        ch.b[i] = toSRGB(clamp(linB[i], 0, 1));
+        let r = linR[i] * mult;
+        let g = linG[i] * mult;
+        let b = linB[i] * mult;
+
+        // Soft clip highlights
+        if (r > 1.0) r = 1.0 + (1.0 - Math.exp(-(r - 1.0)));
+        if (g > 1.0) g = 1.0 + (1.0 - Math.exp(-(g - 1.0)));
+        if (b > 1.0) b = 1.0 + (1.0 - Math.exp(-(b - 1.0)));
+
+        ch.r[i] = toSRGB(clamp(r, 0, 1));
+        ch.g[i] = toSRGB(clamp(g, 0, 1));
+        ch.b[i] = toSRGB(clamp(b, 0, 1));
     }
 
     floatToImageData(ch, imageData);
-
-    // Color grading (temp/tint/sat) — reuse stepColorGrade
     stepColorGrade(imageData, { temp_shift: wbTemp, tint_shift: wbTint, sat: satPct / 100 });
-
-    // Contrast via tone curve
-    if (contrast !== 0) {
-        stepToneCurve(imageData, { contrast: contrast / 1000 });
-    }
+    if (contrast !== 0) stepToneCurve(imageData, { contrast: contrast / 1000 });
 
     return imageData;
 }
