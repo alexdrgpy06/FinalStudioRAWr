@@ -235,7 +235,7 @@ export function parseCubeLUT(data) {
     if (line.startsWith('LUT_3D_SIZE')) {
       size = parseInt(line.split(/\s+/)[1]);
     } else if (/^[\d.-]+/.test(line) && !line.startsWith('TITLE') && !line.startsWith('DOMAIN')) {
-      const parts = line.split(/\s+/).map(parseFloat);
+      const parts = line.split('#')[0].trim().split(/\s+/).map(parseFloat);
       if (parts.length === 3) {
         lut.push(...parts);
       }
