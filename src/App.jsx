@@ -99,7 +99,7 @@ const processWebImage = async (canvas, options) => {
     runCompoundPipeline(imageData, basePreset, creativePreset, overrides);
     ctx.putImageData(imageData, 0, 0);
 
-    // Apply overlays to preview
+    // Apply overlays to preview using standard canvas methods for visibility
     if (options.logo) {
         applyWatermark(canvas, options.logo, options.logo_pos, 0.8, options.logo_size / 100);
     }
