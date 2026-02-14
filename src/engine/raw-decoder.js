@@ -1,6 +1,10 @@
 /**
  * RAW File Decoder
  * Uses libraw-wasm for in-browser RAW decoding.
+ *
+ * imageData() returns: { width, height, colors, bits, dataSize, data: Uint8Array(RGB) }
+ * IMPORTANT: Use width/height from imageData(), NOT from metadata(),
+ * because halfSize mode changes the output resolution.
  */
 
 import LibRaw from 'libraw-wasm';
@@ -8,7 +12,7 @@ import { loadImageFromFile } from './image-engine.js';
 
 const RAW_EXTENSIONS = new Set([
     '.arw', '.cr2', '.cr3', '.nef', '.dng', '.raf', '.orf',
-    '.rw2', '.pef', '.srw', '.x3f', '.3fr', '.mrw', '.jpg', '.jpeg', '.png'
+    '.rw2', '.pef', '.srw', '.x3f', '.3fr', '.mrw'
 ]);
 
 export function isRawFile(filename) {
@@ -17,9 +21,9 @@ export function isRawFile(filename) {
 }
 
 export async function decodeRawFile(file, options = {}) {
-    const { fast = false } = options;
-    
     const ext = '.' + file.name.split('.').pop().toLowerCase();
+
+    // Standard images bypass LibRaw
     if (['.jpg', '.jpeg', '.png'].includes(ext)) {
         const img = await loadImageFromFile(file);
         const canvas = document.createElement('canvas');
@@ -40,40 +44,45 @@ export async function decodeRawFile(file, options = {}) {
     const raw = new LibRaw();
 
     try {
-        // Higher quality settings for decoding
         await raw.open(uint8, {
-            halfSize: !!fast,
+            halfSize: !!options.fast,
             useCameraWb: true,
             useAutoWb: false,
             bright: 1.0,
-            outputColor: 1, // sRGB
-            outputBps: 16, // Use 16-bit internal processing if possible
-            noAutoScale: false,
-            userQual: 3, // AHD demosaicing (better quality than default)
+            outputColor: 1,
+            outputBps: 8,
         });
 
-        await raw.unpack();
-        await raw.dcraw_process();
-
         const meta = await raw.metadata();
-        const data = await raw.imageData(); // Uint8Array (RGB)
+        const result = await raw.imageData();
+
+        // Use dimensions from the imageData result, not metadata
+        const width = result.width;
+        const height = result.height;
+        const data = result.data;
+
+        console.log(`[Decoder] ${file.name}: ${width}x${height}, ${data.length} bytes, ${result.colors}ch ${result.bits}bit`);
 
         if (!data || data.length === 0) {
             throw new Error("LibRaw returned empty image data");
         }
 
-        const width = meta.width;
-        const height = meta.height;
-        const rgbaData = new Uint8ClampedArray(width * height * 4);
+        const totalPixels = width * height;
+        const rgbaData = new Uint8ClampedArray(totalPixels * 4);
 
-        // Optimized conversion loop
-        for (let i = 0; i < width * height; i++) {
-            const i3 = i * 3;
-            const i4 = i * 4;
-            rgbaData[i4]     = data[i3];
-            rgbaData[i4 + 1] = data[i3 + 1];
-            rgbaData[i4 + 2] = data[i3 + 2];
-            rgbaData[i4 + 3] = 255;
+        if (result.colors === 4 || data.length === totalPixels * 4) {
+            // RGBA
+            rgbaData.set(data);
+        } else {
+            // RGB → RGBA
+            for (let i = 0; i < totalPixels; i++) {
+                const i3 = i * 3;
+                const i4 = i * 4;
+                rgbaData[i4] = data[i3];
+                rgbaData[i4 + 1] = data[i3 + 1];
+                rgbaData[i4 + 2] = data[i3 + 2];
+                rgbaData[i4 + 3] = 255;
+            }
         }
 
         if (raw.worker) raw.worker.terminate();
@@ -97,21 +106,11 @@ export async function decodeRawToImageData(file, options) {
     return imageData;
 }
 
-export async function extractRawPreview(file) {
-    return null;
-}
-
 export async function decodeRawToCanvas(file) {
     const { imageData, width, height } = await decodeRawFile(file);
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    ctx.putImageData(imageData, 0, 0);
+    canvas.getContext('2d').putImageData(imageData, 0, 0);
     return canvas;
-}
-
-export async function decodeRawToBitmap(file) {
-    const canvas = await decodeRawToCanvas(file);
-    return createImageBitmap(canvas);
 }

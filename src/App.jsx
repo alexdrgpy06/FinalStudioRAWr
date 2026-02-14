@@ -1,567 +1,333 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import FileListItem from './components/FileListItem';
-import { 
-  Image as ImageIcon, Upload, Settings, Play, X, 
-  CheckCircle2, Loader2, Monitor, Cpu, Cloud, Layers,
-  ChevronRight, Sliders, Palette, Zap, Download, RefreshCw, FolderOpen, Menu,
-  Maximize, Minimize, Trash2
-} from 'lucide-react';
-import { create } from 'zustand';
+import { Upload } from 'lucide-react';
+import { useStudioStore } from './store/store';
 
-// --- STORE ---
-export const useStudioStore = create((set) => ({
-  engine: 'cloud',
-  files: [],
-  activeFileId: null,
-  processing: false,
-  progress: 0,
-  currentStage: 'Ready',
-  options: {
-    exposure: 0.0,
-    contrast: 1.0,
-    saturation: 1.0,
-    vibrance: 0.0,
-    highlights: 0.0,
-    shadows: 0.0,
-    clarity: 0.0,
-    denoise: false,
-    adaptive_threshold: false,
-    lut: null,
-    watermark_text: '',
-    watermark_pos: 'bottom-right',
-    watermark_size: 3, // % of width
-    logo: null,
-    logo_pos: 'bottom-right',
-    logo_size: 15 // % of width
-  },
-  setEngine: (engine) => set({ engine }),
-  setOptions: (newOptions) => set((state) => ({ options: { ...state.options, ...newOptions } })),
-  addFiles: (newFiles) => set((state) => {
-    const updated = [...state.files, ...newFiles.map(f => ({
-      ...f,
-      id: Math.random().toString(36).substr(2, 9),
-      status: f.status || 'pending'
-    }))];
-    return { files: updated, activeFileId: state.activeFileId || updated[0]?.id };
-  }),
-  setActiveFile: (activeFileId) => set({ activeFileId }),
-  removeFile: (id) => set((state) => ({
-    files: state.files.filter(f => f.id !== id),
-    activeFileId: state.activeFileId === id ? state.files.find(f => f.id !== id)?.id : state.activeFileId
-  })),
-  updateFileStatus: (id, status) => set((state) => ({
-    files: state.files.map(f => f.id === id ? { ...f, status } : f)
-  })),
-  setProcessing: (processing) => set({ processing }),
-  setProgress: (progress) => set({ progress }),
-  setStage: (currentStage) => set({ currentStage }),
-  clearFiles: () => set({ files: [], activeFileId: null, progress: 0, currentStage: 'Ready' })
-}));
+// --- Components ---
+import Header from './components/Header';
+import Sidebar from './components/Sidebar';
+import PreviewPanel from './components/PreviewPanel';
+import Filmstrip from './components/Filmstrip';
 
-const PRESETS = [
-    { name: 'Cinematic', options: { exposure: 0.1, contrast: 1.2, saturation: 1.1, vibrance: 0.2, shadows: -0.1, highlights: -0.2 } },
-    { name: 'B&W High', options: { exposure: 0.0, contrast: 1.3, saturation: 0, vibrance: 0, shadows: -0.2, highlights: 0.1 } },
-    { name: 'Vintage', options: { exposure: 0.05, contrast: 1.1, saturation: 0.8, vibrance: 0.1, shadows: 0.1, highlights: -0.1 } },
-    { name: 'Soft', options: { exposure: 0.1, contrast: 0.9, saturation: 0.9, vibrance: 0.0, clarity: -0.2 } },
-    { name: 'Punchy', options: { exposure: 0.0, contrast: 1.25, saturation: 1.2, vibrance: 0.3, highlights: 0.1, shadows: -0.1 } },
-];
+// --- Engine imports ---
+import { runCompoundPipeline, applyTextWatermark, applyWatermark, resizeCanvas, loadImageFromFile, stepVignette, stepGrain, stepSharpen } from './engine/image-engine';
+import { getBasePreset, initPresets, listPresets } from './engine/preset-loader';
+import { loadLUTFile, applyHaldCLUT } from './engine/lut-processor';
 
-const POSITIONS = [
-    { id: 'top-left', label: 'TL' },
-    { id: 'top-right', label: 'TR' },
-    { id: 'bottom-left', label: 'BL' },
-    { id: 'bottom-right', label: 'BR' },
-    { id: 'center', label: 'C' },
-];
+// --- Lazy RAW ---
+let _rawModule = null;
+async function getRawModule() {
+  if (!_rawModule) _rawModule = await import('./engine/raw-decoder');
+  return _rawModule;
+}
 
-// --- ENGINE ---
-import { isRawFile, decodeRawFile } from './engine/raw-decoder';
-import { runCompoundPipeline, processFile, applyTextWatermark, applyWatermark } from './engine/image-engine';
-import { getBasePreset, initPresets } from './engine/preset-loader';
+function isRawExtension(name) {
+  const ext = '.' + name.split('.').pop().toLowerCase();
+  return ['.arw', '.cr2', '.cr3', '.nef', '.dng', '.raf', '.orf', '.rw2', '.pef', '.srw', '.x3f', '.3fr', '.mrw'].includes(ext);
+}
 
-const processWebImage = async (canvas, options) => {
-    const ctx = canvas.getContext('2d');
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    
-    const basePreset = getBasePreset();
-    const creativePreset = { id: 'temp', pipeline: [] };
-    
-    const overrides = {
-        exposure: options.exposure,
-        contrast: (options.contrast - 1) * 100,
-        sat: options.saturation * 100,
-        vibrance: options.vibrance * 100,
-        highlights: options.highlights * 100,
-        shadows: options.shadows * 100,
-        noise_level: options.denoise ? 'medio' : 'none',
-    };
+// ─── THUMBNAIL CACHE ─────────────────────────────────────
+const thumbCache = new Map();
+const PREVIEW_MAX = 1200;
 
-    runCompoundPipeline(imageData, basePreset, creativePreset, overrides);
-    ctx.putImageData(imageData, 0, 0);
+function downscale(imgData, max) {
+  const { width: w, height: h } = imgData;
+  if (Math.max(w, h) <= max) return imgData;
+  const s = max / Math.max(w, h);
+  const nw = Math.round(w * s), nh = Math.round(h * s);
+  const src = document.createElement('canvas');
+  src.width = w; src.height = h;
+  src.getContext('2d').putImageData(imgData, 0, 0);
+  const dst = document.createElement('canvas');
+  dst.width = nw; dst.height = nh;
+  dst.getContext('2d').drawImage(src, 0, 0, nw, nh);
+  return dst.getContext('2d').getImageData(0, 0, nw, nh);
+}
 
-    // Apply overlays to preview using standard canvas methods for visibility
-    if (options.logo) {
-        applyWatermark(canvas, options.logo, options.logo_pos, 0.8, options.logo_size / 100);
-    }
-    if (options.watermark_text) {
-        applyTextWatermark(canvas, options.watermark_text, options.watermark_pos, options.watermark_size / 100);
-    }
-};
+async function loadStandardImage(file, maxEdge) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => {
+      const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url;
+    });
+    const s = Math.min(1, maxEdge / Math.max(img.width, img.height));
+    const w = Math.round(img.width * s), h = Math.round(img.height * s);
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(img, 0, 0, w, h);
+    return c.getContext('2d').getImageData(0, 0, w, h);
+  } finally { URL.revokeObjectURL(url); }
+}
 
-// --- UI COMPONENTS ---
-const ControlSlider = ({ label, value, min, max, step, onChange, unit = "" }) => (
-  <div className="group space-y-2 mb-5">
-    <div className="flex justify-between items-center px-1">
-      <span className="text-[9px] font-black uppercase text-zinc-500 tracking-[0.15em] group-hover:text-zinc-300 transition-colors">{label}</span>
-      <span className="text-blue-400 font-mono text-[10px] font-bold bg-blue-500/5 px-2 py-0.5 rounded border border-blue-500/10">{value}{unit}</span>
-    </div>
-    <input 
-      type="range" min={min} max={max} step={step} 
-      value={value} 
-      onChange={(e) => onChange(parseFloat(e.target.value))}
-      className="w-full h-[3px] bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-blue-500 hover:bg-zinc-700 transition-all"
-    />
-  </div>
-);
+async function getThumbnail(fileObj) {
+  if (thumbCache.has(fileObj.id)) return thumbCache.get(fileObj.id);
+  let imageData;
+  if (isRawExtension(fileObj.name)) {
+    const rawMod = await getRawModule();
+    const decoded = await rawMod.decodeRawFile(fileObj.file, { fast: true });
+    if (!decoded?.imageData) throw new Error('RAW decode returned no data');
+    imageData = downscale(decoded.imageData, PREVIEW_MAX);
+  } else {
+    imageData = await loadStandardImage(fileObj.file, PREVIEW_MAX);
+  }
+  const entry = { imageData, width: imageData.width, height: imageData.height };
+  thumbCache.set(fileObj.id, entry);
+  return entry;
+}
 
-const SidebarHeader = ({ icon: Icon, title }) => (
-    <div className="flex items-center gap-2 mb-6 mt-2 opacity-50">
-        <Icon size={12} className="text-blue-500" />
-        <h2 className="text-[10px] font-black text-white uppercase tracking-[0.2em]">{title}</h2>
-    </div>
-);
+// ─── PIPELINE ────────────────────────────────────────────
+function buildOverrides(opts) {
+  return {
+    exposure: opts.exposure,
+    contrast: (opts.contrast - 1) * 100,
+    sat: opts.saturation * 100,
+    vibrance: opts.vibrance * 100,
+    highlights: opts.highlights * 100,
+    shadows: opts.shadows * 100,
+    whites: opts.whites * 100,
+    blacks: opts.blacks * 100,
+    wb_temp: opts.temperature,
+    wb_tint: opts.tint,
+    noise_level: 'none',
+  };
+}
 
-const PositionPicker = ({ value, onChange }) => (
-    <div className="grid grid-cols-5 gap-1 bg-zinc-950 p-1 rounded-lg border border-zinc-900">
-        {POSITIONS.map(p => (
-            <button 
-                key={p.id}
-                onClick={() => onChange(p.id)}
-                className={`text-[8px] font-bold py-1.5 rounded transition-all ${value === p.id ? 'bg-blue-600 text-white shadow-lg' : 'text-zinc-600 hover:text-zinc-400'}`}
-            >
-                {p.label}
-            </button>
-        ))}
-    </div>
-);
+function applyPipeline(imageData, opts) {
+  const base = getBasePreset();
+  const creative = { id: 'temp', pipeline: [] };
+  runCompoundPipeline(imageData, base, creative, buildOverrides(opts));
+  if (opts.lutImageData) applyHaldCLUT(imageData, opts.lutImageData, 1.0);
+  // Effects: vignette, grain, sharpening
+  if (opts.vignette > 0) stepVignette(imageData, { strength: opts.vignette });
+  if (opts.grain > 0) stepGrain(imageData, { strength: opts.grain });
+  if (opts.sharpening > 0) stepSharpen(imageData, { amount: opts.sharpening });
+}
 
-// --- MAIN APP ---
+async function loadFullImage(file) {
+  if (isRawExtension(file.name)) {
+    const rawMod = await getRawModule();
+    const decoded = await rawMod.decodeRawFile(file, { fast: false });
+    const c = document.createElement('canvas');
+    c.width = decoded.width; c.height = decoded.height;
+    c.getContext('2d').putImageData(decoded.imageData, 0, 0);
+    return c;
+  }
+  const img = await loadImageFromFile(file);
+  const c = document.createElement('canvas');
+  c.width = img.width; c.height = img.height;
+  c.getContext('2d').drawImage(img, 0, 0);
+  return c;
+}
+
+async function exportToDownload(file, opts) {
+  const canvas = await loadFullImage(file);
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  applyPipeline(imgData, opts);
+  ctx.putImageData(imgData, 0, 0);
+  if (opts.logo) applyWatermark(canvas, opts.logo, opts.logo_pos, 0.8, opts.logo_size / 100);
+  if (opts.watermark_text) applyTextWatermark(canvas, opts.watermark_text, opts.watermark_pos, opts.watermark_size / 100);
+  let out = canvas;
+  if (opts.outputSize > 0) out = resizeCanvas(out, opts.outputSize);
+  const mimeMap = { jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+  const mime = mimeMap[opts.exportFormat] || 'image/jpeg';
+  const blob = await new Promise(r => out.toBlob(r, mime, (opts.exportQuality || 92) / 100));
+  const extMap = { jpeg: 'jpg', png: 'png', webp: 'webp' };
+  const ext = extMap[opts.exportFormat] || 'jpg';
+  const u = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = u; a.download = `final_${file.name.split('.')[0]}.${ext}`; a.click();
+  URL.revokeObjectURL(u);
+}
+
+// ─── MAIN APP ────────────────────────────────────────────
 function App() {
   const store = useStudioStore();
   const canvasRef = useRef(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [sidebar, setSidebar] = useState(false);
+  const [enginePresets, setEnginePresets] = useState([]);
+  const debRef = useRef(null);
+  const firstRef = useRef(true);
 
-  const activeFile = store.files.find(f => f.id === store.activeFileId);
+  const active = store.files.find(f => f.id === store.activeFileId);
 
-  // Update Preview Canvas
-  const updatePreview = useCallback(async () => {
-    if (!activeFile || !canvasRef.current) return;
-    setPreviewLoading(true);
-    
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  // Init presets
+  useEffect(() => { initPresets().then(() => setEnginePresets(listPresets())).catch(console.error); }, []);
 
+  // ─── PREVIEW ────────────────────────────────────────────
+  const renderPreview = useCallback(async () => {
+    if (!active?.file || !canvasRef.current) return;
+    setLoading(true);
+    store.setPreviewError(null);
+    store.setPreviewProgress(5);
     try {
-        if (activeFile.file) {
-            console.log(`[App] Decoding ${activeFile.name}...`);
-            if (isRawFile(activeFile.name)) {
-                const decoded = await decodeRawFile(activeFile.file, { fast: true });
-                if (!decoded || !decoded.imageData) throw new Error("Decoder returned empty data");
-                
-                canvas.width = decoded.width;
-                canvas.height = decoded.height;
-                ctx.putImageData(decoded.imageData, 0, 0);
-                await processWebImage(canvas, store.options);
-                setPreviewLoading(false);
-            } else {
-                const url = URL.createObjectURL(activeFile.file);
-                const img = new Image();
-                img.onload = async () => {
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    ctx.drawImage(img, 0, 0);
-                    await processWebImage(canvas, store.options);
-                    URL.revokeObjectURL(url);
-                    setPreviewLoading(false);
-                };
-                img.src = url;
-            }
-        }
-    } catch (e) { 
-        console.error("Preview Update Failed:", e); 
-        setPreviewLoading(false); 
-    }
-  }, [activeFile, store.options]);
-
-  useEffect(() => {
-    initPresets().then(() => updatePreview());
-  }, [updatePreview]);
-
-  const importFiles = async () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.multiple = true;
-    input.onchange = (e) => {
-        const selected = Array.from(e.target.files);
-        store.addFiles(selected.map(f => ({ file: f, name: f.name })));
-    };
-    input.click();
-  };
-
-  const importLogo = async () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/png';
-    input.onchange = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            const url = URL.createObjectURL(file);
-            const img = new Image();
-            img.onload = () => store.setOptions({ logo: img });
-            img.src = url;
-        }
-    };
-    input.click();
-  };
-
-  const loadSample = async () => {
-    try {
-        setPreviewLoading(true);
-        const response = await fetch('/samples/test.nef');
-        const blob = await response.blob();
-        const file = new File([blob], "sample_test.nef", { type: "image/x-nikon-nef" });
-        store.addFiles([{ file, name: file.name, status: 'pending' }]);
+      store.setPreviewProgress(15);
+      const thumb = await getThumbnail(active);
+      store.setPreviewProgress(50);
+      const cloned = new ImageData(new Uint8ClampedArray(thumb.imageData.data), thumb.width, thumb.height);
+      applyPipeline(cloned, store.options);
+      store.setPreviewProgress(85);
+      const canvas = canvasRef.current;
+      canvas.width = thumb.width;
+      canvas.height = thumb.height;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.putImageData(cloned, 0, 0);
+      if (store.options.logo) applyWatermark(canvas, store.options.logo, store.options.logo_pos, 0.8, store.options.logo_size / 100);
+      if (store.options.watermark_text) applyTextWatermark(canvas, store.options.watermark_text, store.options.watermark_pos, store.options.watermark_size / 100);
+      store.setPreviewProgress(100);
     } catch (e) {
-        console.error("Failed to load sample:", e);
+      console.error("[Preview]", e);
+      store.setPreviewError(e.message || 'Preview failed');
     } finally {
-        setPreviewLoading(false);
+      setLoading(false);
     }
-  };
+  }, [active, store.options]);
 
-    const runBatch = async () => {
-        store.setProcessing(true);
-        for (let i = 0; i < store.files.length; i++) {
-            const f = store.files[i];
-            store.setStage(`Processing ${f.name}...`);
-            store.setProgress((i / store.files.length) * 100);
+  // Debounced preview
+  useEffect(() => {
+    if (!active) return;
+    if (debRef.current) clearTimeout(debRef.current);
+    const delay = firstRef.current ? 0 : 60;
+    firstRef.current = false;
+    debRef.current = setTimeout(renderPreview, delay);
+    return () => clearTimeout(debRef.current);
+  }, [renderPreview]);
 
-            try {
-                const canvas = await processFile(f.file, getBasePreset(), { id: 'temp', pipeline: [] }, {
-                    ...store.options,
-                    contrast: (store.options.contrast - 1) * 100,
-                    sat: store.options.saturation * 100,
-                    vibrance: store.options.vibrance * 100,
-                    highlights: store.options.highlights * 100,
-                    shadows: store.options.shadows * 100,
-                    noise_level: store.options.denoise ? 'medio' : 'none',
-                    logo_image: store.options.logo,
-                    logo_scale: store.options.logo_size,
-                    watermark_scale: store.options.watermark_size
-                });
+  useEffect(() => { firstRef.current = true; }, [store.activeFileId]);
 
-                const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.95));
-                const url = URL.createObjectURL(blob);
+  // ─── KEYBOARD SHORTCUTS ─────────────────────────────────
+  useEffect(() => {
+    const handler = (e) => {
+      // Skip if typing in input
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `final_${f.name.split('.')[0]}.jpg`;
-                link.click();
-                URL.revokeObjectURL(url);
-            } catch (err) {
-                console.error(`Failed to process ${f.name}:`, err);
-            }
-        }
-        store.setProgress(100);
-        store.setProcessing(false);
-        store.setStage('Batch Complete');
+      const key = e.key.toLowerCase();
+      if (key === 'z' && !e.shiftKey && !e.ctrlKey) { e.preventDefault(); store.undo(); }
+      else if (key === 'z' && e.shiftKey && !e.ctrlKey) { e.preventDefault(); store.redo(); }
+      else if (key === 'r' && !e.ctrlKey) { e.preventDefault(); store.resetOptions(); }
+      else if (key === 'h') { e.preventDefault(); store.toggleHistogram(); }
+      else if (key === ' ') { e.preventDefault(); store.toggleCompare(); }
+      else if (key === 'e' && !e.ctrlKey) { e.preventDefault(); if (active) exportCurrent(); }
+      else if (key === 'arrowleft') {
+        e.preventDefault();
+        const idx = store.files.findIndex(f => f.id === store.activeFileId);
+        if (idx > 0) store.setActiveFile(store.files[idx - 1].id);
+      }
+      else if (key === 'arrowright') {
+        e.preventDefault();
+        const idx = store.files.findIndex(f => f.id === store.activeFileId);
+        if (idx < store.files.length - 1) store.setActiveFile(store.files[idx + 1].id);
+      }
+      else if (key === 'delete' || key === 'backspace') {
+        e.preventDefault();
+        if (store.activeFileId) { thumbCache.delete(store.activeFileId); store.removeFile(store.activeFileId); }
+      }
     };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [active, store]);
 
-  // --- DRAG & DROP HANDLERS ---
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    setIsDragging(true);
+  // ─── FILE OPS ───────────────────────────────────────────
+  const pick = (accept, multi, cb) => {
+    const input = document.createElement('input');
+    input.type = 'file'; input.multiple = multi; input.accept = accept;
+    input.onchange = (e) => cb(e.target.files); input.click();
+  };
+  const importFiles = () => pick('.arw,.cr2,.cr3,.nef,.dng,.raf,.orf,.rw2,.pef,.srw,.x3f,.3fr,.mrw,.jpg,.jpeg,.png,.tiff,.tif,.bmp,.webp', true,
+    (files) => store.addFiles(Array.from(files).map(f => ({ file: f, name: f.name }))));
+  const importLogo = () => pick('image/png,image/svg+xml', false,
+    (files) => { const f = files[0]; if (f) { const u = URL.createObjectURL(f); const img = new Image(); img.onload = () => store.setOptions({ logo: img }); img.src = u; } });
+  const importLUT = () => pick('image/png', false,
+    async (files) => { const f = files[0]; if (f) { try { const d = await loadLUTFile(f); store.setOptions({ lutImageData: d, lut: f.name }); } catch (e) { console.error(e); } } });
+
+  const exportCurrent = async () => {
+    if (!active?.file) return;
+    store.setProcessing(true); store.setStage('Exporting...'); store.setProgress(50);
+    try { await exportToDownload(active.file, store.options); store.updateFileStatus(active.id, 'done'); }
+    catch (e) { console.error(e); store.updateFileStatus(active.id, 'error'); }
+    store.setProgress(100); store.setProcessing(false); store.setStage('Done');
   };
 
-  const handleDragLeave = (e) => {
-    e.preventDefault();
-    if (!e.currentTarget.contains(e.relatedTarget)) {
-      setIsDragging(false);
+  const exportOne = async (fo) => {
+    store.updateFileStatus(fo.id, 'processing');
+    try { await exportToDownload(fo.file, store.options); store.updateFileStatus(fo.id, 'done'); }
+    catch { store.updateFileStatus(fo.id, 'error'); }
+  };
+
+  const runBatch = async () => {
+    store.setProcessing(true);
+    for (let i = 0; i < store.files.length; i++) {
+      const f = store.files[i];
+      store.setStage(`${i + 1}/${store.files.length} — ${f.name}`);
+      store.setProgress(Math.round((i / store.files.length) * 100));
+      store.updateFileStatus(f.id, 'processing');
+      try { await exportToDownload(f.file, store.options); store.updateFileStatus(f.id, 'done'); }
+      catch (e) { console.error(e); store.updateFileStatus(f.id, 'error'); }
+    }
+    store.setProgress(100); store.setProcessing(false); store.setStage('Batch Done');
+  };
+
+  // Drag & drop
+  const onDragOver = (e) => { e.preventDefault(); setDragging(true); };
+  const onDragLeave = (e) => { e.preventDefault(); if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false); };
+  const onDrop = (e) => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files?.length) store.addFiles(Array.from(e.dataTransfer.files).map(f => ({ file: f, name: f.name }))); };
+
+  const removeActive = () => {
+    if (store.activeFileId) {
+      thumbCache.delete(store.activeFileId);
+      store.removeFile(store.activeFileId);
     }
   };
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    setIsDragging(false);
-
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        const selected = Array.from(e.dataTransfer.files);
-        store.addFiles(selected.map(f => ({ file: f, name: f.name })));
-    }
-  };
-
+  // ─── RENDER ─────────────────────────────────────────────
   return (
-    <div
-        className="flex h-screen bg-[#050506] text-zinc-300 font-sans selection:bg-blue-500/30 overflow-hidden relative"
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-    >
-      {/* Drag & Drop Overlay */}
-      {isDragging && (
-        <div className="absolute inset-0 z-50 bg-blue-500/20 backdrop-blur-sm border-4 border-blue-500 flex items-center justify-center pointer-events-none animate-in fade-in duration-200">
-            <div className="bg-zinc-900/90 p-8 rounded-3xl border border-blue-500/50 shadow-2xl flex flex-col items-center gap-4">
-                <div className="w-20 h-20 bg-blue-500/20 rounded-full flex items-center justify-center animate-bounce">
-                    <Upload size={40} className="text-blue-500" />
-                </div>
-                <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Release to Import</h2>
-                <p className="text-sm font-bold text-zinc-400 uppercase tracking-widest">Drop files to add to queue</p>
-            </div>
+    <div className="flex h-[100dvh] bg-[#050506] text-zinc-300 font-sans overflow-hidden relative" onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+      {/* Drop overlay */}
+      {dragging && (
+        <div className="absolute inset-0 z-50 bg-blue-600/20 backdrop-blur-sm border-4 border-blue-500 flex items-center justify-center pointer-events-none animate-fade-in">
+          <div className="bg-zinc-900/90 p-6 rounded-2xl border border-blue-500/50 shadow-2xl text-center">
+            <Upload size={36} className="text-blue-500 mx-auto mb-3 animate-bounce" />
+            <p className="text-lg font-black text-white uppercase tracking-tight">Drop to Import</p>
+          </div>
         </div>
       )}
-      
-      {/* Sidebar Controls */}
-      <aside className={`fixed inset-y-0 left-0 w-80 lg:relative lg:translate-x-0 z-40 border-r border-zinc-900 bg-[#08080A] flex flex-col shadow-2xl transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="p-6 lg:p-8 border-b border-zinc-900/50 bg-[#0A0A0C]">
-          <div className="flex items-center justify-between">
-            <h1 className="text-lg font-black tracking-tighter text-white group cursor-default">
-              FINAL STUDIO <span className="text-blue-500 group-hover:animate-pulse">CLOUD</span>
-            </h1>
-            <button className="lg:hidden text-zinc-500" onClick={() => setSidebarOpen(false)}><X size={20}/></button>
-          </div>
-          
-          <div className="mt-8 flex bg-zinc-950/50 p-1 rounded-xl border border-zinc-900">
-            <button 
-              className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-[9px] font-black rounded-lg transition-all bg-zinc-800 text-blue-400 shadow-xl border border-zinc-700/50`}
-            >
-              <Cloud size={12} strokeWidth={3} /> BROWSER WEB
-            </button>
-          </div>
+
+      <Sidebar
+        visible={sidebar}
+        onClose={() => setSidebar(false)}
+        hasActiveFile={!!active}
+        enginePresets={enginePresets}
+        onImportLogo={importLogo}
+        onImportLUT={importLUT}
+        onExportCurrent={exportCurrent}
+        onRunBatch={runBatch}
+      />
+
+      <main className="flex-1 flex flex-col min-w-0">
+        <Header
+          fileCount={store.files.length}
+          onImport={importFiles}
+          onToggleSidebar={() => setSidebar(true)}
+        />
+
+        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden min-h-0">
+          <PreviewPanel
+            canvasRef={canvasRef}
+            loading={loading}
+            onExportCurrent={exportCurrent}
+            onRemoveActive={removeActive}
+            thumbCache={thumbCache}
+          />
+
+          <Filmstrip
+            thumbCache={thumbCache}
+            onImport={importFiles}
+            onExport={exportOne}
+            onRemove={(id) => { thumbCache.delete(id); store.removeFile(id); }}
+            onClear={() => { store.clearFiles(); thumbCache.clear(); }}
+          />
         </div>
-
-        <div className="flex-1 overflow-y-auto px-6 lg:px-8 py-6 space-y-10 custom-scrollbar">
-          <section>
-            <SidebarHeader icon={Layers} title="Quick Presets" />
-            <div className="grid grid-cols-2 gap-2">
-                {PRESETS.map(preset => (
-                    <button
-                        key={preset.name}
-                        onClick={() => store.setOptions(preset.options)}
-                        className="py-3 px-2 bg-zinc-900 border border-zinc-800 rounded-xl text-[9px] font-black uppercase hover:bg-zinc-800 hover:border-zinc-700 hover:text-blue-400 transition-all text-zinc-500"
-                    >
-                        {preset.name}
-                    </button>
-                ))}
-            </div>
-          </section>
-
-          <section>
-            <SidebarHeader icon={Sliders} title="Develop Engine" />
-            <ControlSlider label="Exposure" value={store.options.exposure} min={-4} max={4} step={0.01} onChange={(v) => store.setOptions({ exposure: v })} />
-            <ControlSlider label="Contrast" value={store.options.contrast} min={0} max={2} step={0.01} onChange={(v) => store.setOptions({ contrast: v })} />
-            <ControlSlider label="Highlights" value={store.options.highlights} min={-1} max={1} step={0.01} onChange={(v) => store.setOptions({ highlights: v })} />
-            <ControlSlider label="Shadows" value={store.options.shadows} min={-1} max={1} step={0.01} onChange={(v) => store.setOptions({ shadows: v })} />
-          </section>
-
-          <section>
-            <SidebarHeader icon={Palette} title="Color & Grading" />
-            <ControlSlider label="Vibrance" value={store.options.vibrance} min={-1} max={1} step={0.01} onChange={(v) => store.setOptions({ vibrance: v })} />
-            <ControlSlider label="Saturation" value={store.options.saturation} min={0} max={2} step={0.01} onChange={(v) => store.setOptions({ saturation: v })} />
-          </section>
-
-          <section className="space-y-6">
-            <SidebarHeader icon={Zap} title="Watermark" />
-            <div className="space-y-4">
-                <input 
-                    type="text" 
-                    placeholder="TEXT OVERLAY"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-4 text-[10px] font-bold focus:outline-none focus:border-blue-500/50 transition-all placeholder:text-zinc-700"
-                    value={store.options.watermark_text}
-                    onChange={(e) => store.setOptions({ watermark_text: e.target.value })}
-                />
-                <div className="space-y-3">
-                    <span className="text-[8px] font-black text-zinc-600 uppercase tracking-widest px-1">TEXT POSITION & SIZE</span>
-                    <PositionPicker value={store.options.watermark_pos} onChange={(v) => store.setOptions({ watermark_pos: v })} />
-                    <ControlSlider label="Text Size" value={store.options.watermark_size} min={1} max={10} step={0.1} onChange={(v) => store.setOptions({ watermark_size: v })} unit="%" />
-                </div>
-            </div>
-          </section>
-
-          <section className="space-y-6">
-            <SidebarHeader icon={ImageIcon} title="Logo Branding" />
-            <div className="space-y-4">
-                <button 
-                    onClick={importLogo}
-                    className={`w-full py-4 px-5 border rounded-xl text-[10px] font-black flex items-center justify-between group transition-all ${store.options.logo ? 'bg-blue-500/10 border-blue-500/40 text-blue-400' : 'bg-zinc-950 border-zinc-800 text-zinc-500 hover:border-blue-500/40'}`}
-                >
-                  <span className="flex items-center gap-3"><ImageIcon size={14} /> {store.options.logo ? 'LOGO LOADED' : 'UPLOAD PNG LOGO'}</span>
-                  {store.options.logo ? <CheckCircle2 size={12} /> : <Upload size={12} />}
-                </button>
-                
-                {store.options.logo && (
-                    <div className="space-y-3 animate-in fade-in slide-in-from-top-2">
-                        <span className="text-[8px] font-black text-zinc-600 uppercase tracking-widest px-1">LOGO POSITION & SCALE</span>
-                        <PositionPicker value={store.options.logo_pos} onChange={(v) => store.setOptions({ logo_pos: v })} />
-                        <ControlSlider label="Logo Scale" value={store.options.logo_size} min={5} max={50} step={1} onChange={(v) => store.setOptions({ logo_size: v })} unit="%" />
-                        <button onClick={() => store.setOptions({ logo: null })} className="w-full py-2 text-[8px] font-black text-red-500/50 hover:text-red-500 uppercase tracking-widest">Remove Logo</button>
-                    </div>
-                )}
-            </div>
-          </section>
-        </div>
-
-        <div className="p-6 lg:p-8 border-t border-zinc-900/50 bg-[#08080A] space-y-4">
-          <button 
-            disabled={store.processing || store.files.length === 0}
-            onClick={runBatch}
-            className="group w-full py-5 bg-blue-600 hover:bg-blue-500 disabled:opacity-20 disabled:grayscale rounded-3xl text-xs font-black text-white shadow-2xl shadow-blue-900/40 transition-all flex items-center justify-center gap-3"
-          >
-            {store.processing ? <Loader2 className="animate-spin" size={18} /> : (
-                <><Play size={14} fill="white" /> EXECUTE BATCH</>
-            )}
-          </button>
-        </div>
-      </aside>
-
-      {/* Main Workspace */}
-      <main className="flex-1 flex flex-col bg-[#050506]">
-        {/* Navigation Bar */}
-        <header className="h-16 lg:h-20 border-b border-zinc-900/50 flex items-center justify-between px-6 lg:px-10 bg-[#08080A]/80 backdrop-blur-xl z-10">
-          <div className="flex items-center gap-4 lg:gap-10">
-            <button className="lg:hidden text-zinc-400" onClick={() => setSidebarOpen(true)}><Menu size={24}/></button>
-            <div className="hidden sm:flex gap-6 lg:gap-10">
-                {['develop', 'library', 'batch'].map(tab => (
-                <button key={tab} className={`text-[10px] font-black uppercase tracking-[0.3em] transition-all hover:text-white ${tab === 'develop' ? 'text-blue-500' : 'text-zinc-600'}`}>{tab}</button>
-                ))}
-            </div>
-          </div>
-          <div className="flex items-center gap-2 lg:gap-4">
-            <button 
-                onClick={loadSample}
-                className="hidden sm:block text-zinc-500 hover:text-blue-400 text-[9px] font-black uppercase tracking-widest px-4 py-2 border border-zinc-800 rounded-full transition-all"
-            >
-                Test RAW
-            </button>
-            <button 
-                onClick={importFiles}
-                className="bg-white text-black px-4 lg:px-8 py-2.5 lg:py-3 rounded-full text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-all shadow-xl shadow-white/5 active:scale-95"
-            >
-                Import
-            </button>
-          </div>
-        </header>
-
-        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-          {/* Central Preview Area */}
-          <div className="flex-1 bg-black p-4 lg:p-12 flex flex-col items-center justify-center relative overflow-hidden group">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(37,99,235,0.03)_0%,_transparent_70%)]" />
-            
-            <div className="w-full h-full relative rounded-2xl lg:rounded-[3rem] border border-white/5 bg-zinc-950/20 flex flex-col items-center justify-center overflow-hidden shadow-[0_0_100px_rgba(0,0,0,0.5)]">
-               {store.files.length === 0 ? (
-                 <div className="text-center space-y-6">
-                    <div className="w-20 h-20 lg:w-24 lg:h-24 bg-zinc-900/50 rounded-3xl lg:rounded-[2.5rem] flex items-center justify-center mx-auto border border-zinc-800 shadow-2xl group-hover:scale-110 transition-transform duration-500">
-                      <Upload size={32} className="text-zinc-700" />
-                    </div>
-                    <div className="space-y-2 px-4">
-                        <p className="text-sm font-black text-zinc-400 uppercase tracking-widest">Awaiting Input</p>
-                        <p className="text-[10px] text-zinc-600 uppercase tracking-[0.2em]">Drop RAW or Image files here</p>
-                        <button onClick={loadSample} className="mt-4 text-blue-500/50 hover:text-blue-500 text-[10px] font-bold uppercase underline underline-offset-4">Load Sample RAW</button>
-                    </div>
-                 </div>
-               ) : (
-                 <div className="w-full h-full flex flex-col items-center justify-center relative p-4">
-                    <div className="relative group/canvas max-w-full max-h-full">
-                        <canvas ref={canvasRef} className={`max-w-full max-h-full rounded-lg shadow-2xl transition-opacity duration-300 ${previewLoading ? 'opacity-30' : 'opacity-100'}`} />
-                        {!previewLoading && (
-                            <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover/canvas:opacity-100 transition-opacity">
-                                <button onClick={() => store.removeFile(store.activeFileId)} className="p-2 bg-red-500/20 hover:bg-red-500 backdrop-blur text-white rounded-lg transition-all"><Trash2 size={16}/></button>
-                            </div>
-                        )}
-                    </div>
-                    {previewLoading && <div className="absolute inset-0 flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={48} /></div>}
-                 </div>
-               )}
-            </div>
-            
-            {/* Float HUD - Progress Overlay */}
-            {store.processing && (
-                <div className="absolute bottom-6 lg:bottom-12 left-1/2 -translate-x-1/2 w-[90%] lg:max-w-lg bg-zinc-900/90 backdrop-blur-3xl p-4 lg:p-6 rounded-2xl lg:rounded-[2rem] border border-white/5 shadow-2xl flex items-center gap-4 lg:gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <div className="w-10 h-10 lg:w-12 lg:h-12 bg-blue-600 rounded-xl lg:rounded-2xl flex items-center justify-center shadow-lg shadow-blue-600/30">
-                        <RefreshCw size={18} className="text-white animate-spin" />
-                    </div>
-                    <div className="flex-1 space-y-2 lg:space-y-3">
-                        <div className="flex justify-between items-end">
-                            <div className="space-y-1">
-                                <span className="block text-[8px] font-black text-blue-500 uppercase tracking-widest">{store.currentStage}</span>
-                                <span className="block text-xs font-black text-white uppercase truncate max-w-[120px] lg:max-w-[200px] tracking-tight">{activeFile?.name}</span>
-                            </div>
-                            <span className="text-lg lg:text-xl font-black text-white">{Math.round(store.progress)}%</span>
-                        </div>
-                        <div className="h-1 lg:h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                            <div className="h-full bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.5)] transition-all duration-500" style={{ width: `${store.progress}%` }} />
-                        </div>
-                    </div>
-                </div>
-            )}
-          </div>
-
-          {/* Media Browser (Filmstrip) */}
-          <div className="h-44 lg:h-auto lg:w-80 border-t lg:border-t-0 lg:border-l border-zinc-900/50 bg-[#08080A] flex flex-col shrink-0">
-            <div className="hidden lg:block p-6 border-b border-zinc-900/50">
-                <div className="flex items-center justify-between">
-                    <h3 className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.3em]">Source Queue</h3>
-                    <span className="text-[10px] font-bold text-zinc-700 bg-zinc-900 px-2 py-0.5 rounded-md">{store.files.length}</span>
-                </div>
-            </div>
-            <div className="flex-1 overflow-x-auto lg:overflow-x-hidden lg:overflow-y-auto p-4 flex lg:flex-col gap-3 custom-scrollbar">
-              {store.files.map(f => (
-                <div key={f.id} className="min-w-[140px] lg:min-w-0 relative group">
-                    <FileListItem
-                        file={f}
-                        isActive={store.activeFileId === f.id}
-                        onSelect={store.setActiveFile}
-                    />
-                    <button onClick={(e) => { e.stopPropagation(); store.removeFile(f.id); }} className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity scale-75 hover:scale-100"><X size={10}/></button>
-                </div>
-              ))}
-              <button 
-                onClick={importFiles}
-                className="min-w-[140px] lg:min-w-0 p-4 lg:p-8 rounded-xl lg:rounded-2xl border-2 border-dashed border-zinc-900 hover:border-zinc-800 hover:bg-zinc-900/10 transition-all flex flex-col items-center justify-center gap-2 text-zinc-700 hover:text-zinc-500"
-              >
-                 <Upload size={16} />
-                 <span className="text-[8px] font-black uppercase tracking-widest">Add Files</span>
-              </button>
-            </div>
-            
-            <div className="hidden lg:block p-6 bg-[#0A0A0C]">
-                <button 
-                    onClick={store.clearFiles}
-                    className="w-full py-4 text-[9px] font-black text-zinc-600 uppercase tracking-widest border border-zinc-900 rounded-xl hover:text-red-500 hover:bg-red-500/5 hover:border-red-500/10 transition-all"
-                >
-                    Purge Session
-                </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Global System Status */}
-        <footer className="h-12 lg:h-14 border-t border-zinc-900/50 bg-[#08080A] px-6 lg:px-10 flex items-center justify-between text-[9px] font-black text-zinc-600 tracking-[0.1em]">
-           <div className="flex gap-4 lg:gap-8 items-center">
-              <div className="flex items-center gap-2">
-                 <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_#3b82f6]" />
-                 <span className="hidden sm:inline">SYSTEM: ONLINE</span>
-              </div>
-              <div className="hidden sm:block h-3 w-[1px] bg-zinc-800" />
-              <span className="hidden md:inline text-zinc-500 uppercase">Production <span className="text-zinc-700">Cloud Build</span></span>
-              <div className="h-3 w-[1px] bg-zinc-800" />
-              <span className="text-zinc-500 uppercase">Engine: <span className="text-blue-500">Fast WASM v2</span></span>
-           </div>
-           <div className="flex items-center gap-4">
-                <span className="hidden sm:inline text-zinc-700">BUILD 2.6.5 CLOUD</span>
-                <button className="p-2 hover:bg-zinc-900 rounded-lg transition-colors"><Settings size={12} /></button>
-           </div>
-        </footer>
       </main>
     </div>
   );

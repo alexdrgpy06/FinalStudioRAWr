@@ -55,12 +55,12 @@ export async function initPresets() {
     const userBundledPromises = BUNDLED_USER_PRESET_IDS.map(async (id) => {
         try {
             const res = await fetch(`/presets/user/${id}.json`);
-            if (res.ok) {
+            if (res.ok && res.headers.get('content-type')?.includes('json')) {
                 const data = await res.json();
                 presetCache[data.id || id] = data;
             }
         } catch (e) {
-            console.warn(`Failed to load bundled user preset: ${id}`, e);
+            // Silently skip missing preset files
         }
     });
 

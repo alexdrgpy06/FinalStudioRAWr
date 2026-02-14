@@ -5,6 +5,10 @@ import react from "@vitejs/plugin-react-swc";
 export default defineConfig(async () => ({
   plugins: [react()],
 
+  optimizeDeps: {
+    exclude: ['libraw-wasm'],
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent vite from obscuring rust errors
@@ -13,12 +17,16 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
     watch: {
       // 3. tell vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
   },
-  
+
   // Build target
   build: {
     outDir: "dist",
