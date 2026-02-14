@@ -1,9 +1,6 @@
 /**
  * RAW File Decoder
  * Uses libraw-wasm for in-browser RAW decoding.
- * 
- * Refactored to use the high-level API provided by libraw-wasm 1.1.2+.
- * The package handles Worker spawning and WASM loading internally.
  */
 
 import LibRaw from 'libraw-wasm';
@@ -14,29 +11,14 @@ const RAW_EXTENSIONS = new Set([
     '.rw2', '.pef', '.srw', '.x3f', '.3fr', '.mrw', '.jpg', '.jpeg', '.png'
 ]);
 
-/**
- * Check if a filename is a RAW image format
- * @param {string} filename
- * @returns {boolean}
- */
 export function isRawFile(filename) {
     const ext = '.' + filename.split('.').pop().toLowerCase();
     return RAW_EXTENSIONS.has(ext);
 }
 
-/**
- * Decode a RAW file to ImageData using libraw-wasm
- * @param {File} file - The RAW image file
- * @param {object} [options] - Options for decoding
- * @param {boolean} [options.fast=false] - If true, try to decode faster (half size)
- * @returns {Promise<{imageData: ImageData, width: number, height: number, metadata: object}>}
- */
 export async function decodeRawFile(file, options = {}) {
     const { fast = false } = options;
-    const buffer = await file.arrayBuffer();
-    const uint8 = new Uint8Array(buffer);
-
-    // Fallback for standard images if they are passed here
+    
     const ext = '.' + file.name.split('.').pop().toLowerCase();
     if (['.jpg', '.jpeg', '.png'].includes(ext)) {
         const img = await loadImageFromFile(file);
@@ -53,138 +35,67 @@ export async function decodeRawFile(file, options = {}) {
         };
     }
 
-    // Instantiate LibRaw (spawns a worker internally)
+    const buffer = await file.arrayBuffer();
+    const uint8 = new Uint8Array(buffer);
     const raw = new LibRaw();
 
     try {
-        // Open the RAW file with settings
-        // halfSize: true significantly speeds up decoding (1/2 or 1/4 resolution)
         await raw.open(uint8, {
             halfSize: !!fast,
-            useCameraWb: true, // AutoWB can sometimes fail/clip
+            useCameraWb: true,
             useAutoWb: false,
-            bright: 1.0, // Neutral brightness
+            bright: 1.0,
             outputColor: 1, // sRGB
-            outputBps: 8 // Force 8-bit to ensure Uint8Array match
+            outputBps: 8
         });
 
-        // Implicit processing seems to be failing or incomplete in the WASM wrapper.
-        // We explicitly trigger the standard LibRaw pipeline steps.
-        try {
-            await raw.runFn("unpack");
-            await raw.runFn("dcraw_process");
-        } catch (e) {
-            console.warn("Manual unpack/process failed (might be built-in to open):", e);
-        }
+        // Ensure unpack and processing are called
+        await raw.unpack();
+        await raw.dcraw_process();
 
         const meta = await raw.metadata();
-        const data = await raw.imageData(); // Returns Uint8Array (RGB)
+        const data = await raw.imageData(); // Uint8Array (RGB)
 
-        // Ensure we have data even if implicit process failed
         if (!data || data.length === 0) {
-            console.log("[RAW] Implicit data missing, forcing dcraw_process...");
-            await raw.runFn("unpack");
-            await raw.runFn("dcraw_process");
-        }
-
-        if (!data || !meta) {
-            throw new Error("Failed to decode data from LibRaw");
+            throw new Error("LibRaw returned empty image data");
         }
 
         const width = meta.width;
         const height = meta.height;
+        const rgbaData = new Uint8ClampedArray(width * height * 4);
 
-        // Convert RGB to RGBA for ImageData
-        // The data returned by imageData() is typically 3 channels (RGB)
-        // We need to create a 4-channel array (RGBA)
-        const totalPixels = width * height;
-        const rgbaData = new Uint8ClampedArray(totalPixels * 4);
-
-        let rgbIdx = 0;
-        let rgbaIdx = 0;
-
-        // Loop unrolling or simple loop usually fast enough for JS engines now
-        for (let i = 0; i < totalPixels; i++) {
-            rgbaData[rgbaIdx] = data[rgbIdx];       // R
-            rgbaData[rgbaIdx + 1] = data[rgbIdx + 1]; // G
-            rgbaData[rgbaIdx + 2] = data[rgbIdx + 2]; // B
-            rgbaData[rgbaIdx + 3] = 255;            // A (Opaque)
-
-            rgbIdx += 3;
-            rgbaIdx += 4;
+        for (let i = 0; i < width * height; i++) {
+            rgbaData[i * 4]     = data[i * 3];
+            rgbaData[i * 4 + 1] = data[i * 3 + 1];
+            rgbaData[i * 4 + 2] = data[i * 3 + 2];
+            rgbaData[i * 4 + 3] = 255;
         }
 
-        // Debug: Log sample pixels to check for black image issue
-        const sampleIdx = Math.floor(totalPixels / 2) * 4;
-        console.log(`[RAW Debug] Decoded ${width}x${height}. Center pixel (RGBA):`,
-            rgbaData[sampleIdx], rgbaData[sampleIdx + 1], rgbaData[sampleIdx + 2], rgbaData[sampleIdx + 3]);
-        console.log(`[RAW Debug] First pixel (RGBA):`,
-            rgbaData[0], rgbaData[1], rgbaData[2], rgbaData[3]);
-
-        // Create metadata object to match previous structure
-        const metadata = {
-            make: meta.make || '',
-            model: meta.model || '',
-            iso: meta.iso || 0,
-            shutter: meta.shutter || 0,
-            aperture: meta.aperture || 0,
-            timestamp: meta.timestamp || 0
-        };
-
-        // There is no explicit free() method on the high-level wrapper wrapper in 1.1.2.
-        // The worker remains active. If we want to terminate it:
-        if (raw.worker && typeof raw.worker.terminate === 'function') {
-            raw.worker.terminate();
-        }
+        if (raw.worker) raw.worker.terminate();
 
         return {
             imageData: new ImageData(rgbaData, width, height),
             width,
             height,
-            metadata
+            metadata: meta
         };
 
     } catch (err) {
-        console.error(`Failed to decode RAW file "${file.name}":`, err);
-        // Ensure worker is terminated on error
-        if (raw.worker && typeof raw.worker.terminate === 'function') {
-            raw.worker.terminate();
-        }
+        console.error(`[Decoder] Failed:`, err);
+        if (raw.worker) raw.worker.terminate();
         throw err;
     }
 }
 
-/**
- * Decode a RAW file directly to ImageData (no canvas involved, safe for Worker)
- * @param {File} file - The RAW image file
- * @param {object} [options]
- * @returns {Promise<ImageData>}
- */
 export async function decodeRawToImageData(file, options) {
     const { imageData } = await decodeRawFile(file, options);
     return imageData;
 }
 
-/**
- * Extract the embedded JPEG preview from a RAW file.
- * NOTE: The libraw-wasm wrapper does not currently expose thumbnail extraction.
- * We return null to trigger the fallback to 'fast decode'.
- * 
- * @param {File} file 
- * @returns {Promise<{imageData: ImageData, width: number, height: number} | null>}
- */
 export async function extractRawPreview(file) {
-    // Current binding doesn't support unpack_thumb nicely.
-    // Returning null causes the main worker (worker.js) to fall back 
-    // to decodeRawToImageData({ fast: true }), which uses half-size decode.
     return null;
 }
 
-/**
- * Decode a RAW file and return it as a canvas element
- * @param {File} file - The RAW image file
- * @returns {Promise<HTMLCanvasElement>}
- */
 export async function decodeRawToCanvas(file) {
     const { imageData, width, height } = await decodeRawFile(file);
     const canvas = document.createElement('canvas');
@@ -195,11 +106,6 @@ export async function decodeRawToCanvas(file) {
     return canvas;
 }
 
-/**
- * Decode a RAW file and return it as an ImageBitmap (for offscreen use)
- * @param {File} file
- * @returns {Promise<ImageBitmap>}
- */
 export async function decodeRawToBitmap(file) {
     const canvas = await decodeRawToCanvas(file);
     return createImageBitmap(canvas);

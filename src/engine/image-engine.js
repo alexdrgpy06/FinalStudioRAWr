@@ -840,7 +840,7 @@ export function loadImageFromFile(file) {
         };
         img.onerror = () => {
             URL.revokeObjectURL(url);
-            reject(new Error(`Failed to load image: ${file.name}`));
+            reject(new Error(`Failed to load image: \${file.name}`));
         };
         img.src = url;
     });
