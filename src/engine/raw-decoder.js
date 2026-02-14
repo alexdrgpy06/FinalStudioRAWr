@@ -70,8 +70,6 @@ export async function decodeRawFile(file, options = {}) {
 
         // Implicit processing seems to be failing or incomplete in the WASM wrapper.
         // We explicitly trigger the standard LibRaw pipeline steps.
-        // If these methods are already called by open(), re-calling them might be redundant but usually safe.
-        // If "open" in the WASM binding *only* does open_buffer, these are REQUIRED.
         try {
             await raw.runFn("unpack");
             await raw.runFn("dcraw_process");
@@ -81,6 +79,13 @@ export async function decodeRawFile(file, options = {}) {
 
         const meta = await raw.metadata();
         const data = await raw.imageData(); // Returns Uint8Array (RGB)
+
+        // Ensure we have data even if implicit process failed
+        if (!data || data.length === 0) {
+            console.log("[RAW] Implicit data missing, forcing dcraw_process...");
+            await raw.runFn("unpack");
+            await raw.runFn("dcraw_process");
+        }
 
         if (!data || !meta) {
             throw new Error("Failed to decode data from LibRaw");
