@@ -65,19 +65,25 @@ import { runCompoundPipeline, processFile } from './engine/image-engine';
 import { getBasePreset, initPresets } from './engine/preset-loader';
 
 const processWebImage = async (canvas, options) => {
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     
+    // Check if image data is valid
+    if (imageData.data[0] === 0 && imageData.data[imageData.data.length-1] === 0) {
+        console.warn("[App] Image data appears empty/black");
+    }
+
     const basePreset = getBasePreset();
     const creativePreset = { id: 'temp', pipeline: [] };
     
     const overrides = {
-        exposure: options.exposure,
-        contrast: (options.contrast - 1) * 100,
-        sat: options.saturation * 100,
-        vibrance: options.vibrance * 100,
-        highlights: options.highlights * 100,
-        shadows: options.shadows * 100,
+        exposure: options.exposure || 0,
+        contrast: ((options.contrast || 1) - 1) * 100,
+        sat: (options.saturation ?? 1) * 100,
+        vibrance: (options.vibrance || 0) * 100,
+        highlights: (options.highlights || 0) * 100,
+        shadows: (options.shadows || 0) * 100,
         noise_level: options.denoise ? 'medio' : 'none',
     };
 
@@ -186,6 +192,8 @@ function App() {
 
     const runBatch = async () => {
         store.setProcessing(true);
+        const results = [];
+        
         for (let i = 0; i < store.files.length; i++) {
             const f = store.files[i];
             store.setStage(`Processing ${f.name}...`);
@@ -203,17 +211,28 @@ function App() {
                 });
 
                 const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92));
-                const url = URL.createObjectURL(blob);
-
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `final_${f.name.split('.')[0]}.jpg`;
-                link.click();
-                URL.revokeObjectURL(url);
+                results.push({ blob, name: `final_${f.name.split('.')[0]}.jpg` });
+                store.updateFileStatus(f.id, 'completed');
             } catch (err) {
                 console.error(`Failed to process ${f.name}:`, err);
+                store.updateFileStatus(f.id, 'error');
             }
         }
+
+        // Trigger individual downloads (or we could ZIP them, but standard browser behavior for multiple downloads)
+        for (const res of results) {
+            const url = URL.createObjectURL(res.blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = res.name;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            // Delay slightly to prevent browser from blocking too many simultaneous downloads
+            await new Promise(r => setTimeout(r, 200));
+            URL.revokeObjectURL(url);
+        }
+
         store.setProgress(100);
         store.setProcessing(false);
         store.setStage('Batch Complete');

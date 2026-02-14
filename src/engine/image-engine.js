@@ -10,10 +10,14 @@ import { applyHaldCLUT } from './lut-processor.js';
 // Utility helpers
 // ─────────────────────────────────────────────────────────
 
-/** sRGB → linear */
-function toLinear(v) { return Math.pow(v, 2.2); }
-/** linear → sRGB */
-function toSRGB(v) { return Math.pow(Math.max(v, 0), 1 / 2.2); }
+/** sRGB → linear (High precision) */
+function toLinear(v) { 
+    return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+}
+/** linear → sRGB (High precision) */
+function toSRGB(v) { 
+    return v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+}
 
 function clamp(v, lo = 0, hi = 1) { return v < lo ? lo : v > hi ? hi : v; }
 
@@ -306,44 +310,61 @@ export function stepLocalContrast(imageData, params = {}) {
     return imageData;
 }
 
-/** Simple box blur for unsharp mask */
+/** Optimized box blur using sliding window with Float32 intermediate for precision */
 function boxBlur(data, width, height, radius) {
+    if (radius < 1) return data;
     const out = new Uint8ClampedArray(data.length);
-    const temp = new Uint8ClampedArray(data.length);
+    const temp = new Float32Array(data.length);
+    const count = radius * 2 + 1;
 
     // Horizontal pass
     for (let y = 0; y < height; y++) {
+        let rSum = 0, gSum = 0, bSum = 0;
+        const rowOffset = y * width * 4;
+        
+        for (let dx = -radius; dx <= radius; dx++) {
+            const nx = Math.min(Math.max(dx, 0), width - 1);
+            const idx = rowOffset + nx * 4;
+            rSum += data[idx]; gSum += data[idx + 1]; bSum += data[idx + 2];
+        }
+        
         for (let x = 0; x < width; x++) {
-            let rSum = 0, gSum = 0, bSum = 0, count = 0;
-            for (let dx = -radius; dx <= radius; dx++) {
-                const nx = Math.min(Math.max(x + dx, 0), width - 1);
-                const idx = (y * width + nx) * 4;
-                rSum += data[idx]; gSum += data[idx + 1]; bSum += data[idx + 2];
-                count++;
-            }
-            const idx = (y * width + x) * 4;
+            const idx = rowOffset + x * 4;
             temp[idx] = rSum / count;
             temp[idx + 1] = gSum / count;
             temp[idx + 2] = bSum / count;
             temp[idx + 3] = 255;
+            
+            const prevX = Math.max(x - radius, 0);
+            const nextX = Math.min(x + radius + 1, width - 1);
+            rSum += data[rowOffset + nextX * 4] - data[rowOffset + prevX * 4];
+            gSum += data[rowOffset + nextX * 4 + 1] - data[rowOffset + prevX * 4 + 1];
+            bSum += data[rowOffset + nextX * 4 + 2] - data[rowOffset + prevX * 4 + 2];
         }
     }
 
     // Vertical pass
     for (let x = 0; x < width; x++) {
+        let rSum = 0, gSum = 0, bSum = 0;
+        
+        for (let dy = -radius; dy <= radius; dy++) {
+            const ny = Math.min(Math.max(dy, 0), height - 1);
+            const idx = (ny * width + x) * 4;
+            rSum += temp[idx]; gSum += temp[idx + 1]; bSum += temp[idx + 2];
+        }
+        
         for (let y = 0; y < height; y++) {
-            let rSum = 0, gSum = 0, bSum = 0, count = 0;
-            for (let dy = -radius; dy <= radius; dy++) {
-                const ny = Math.min(Math.max(y + dy, 0), height - 1);
-                const idx = (ny * width + x) * 4;
-                rSum += temp[idx]; gSum += temp[idx + 1]; bSum += temp[idx + 2];
-                count++;
-            }
             const idx = (y * width + x) * 4;
-            out[idx] = rSum / count;
-            out[idx + 1] = gSum / count;
-            out[idx + 2] = bSum / count;
+            out[idx] = Math.round(rSum / count);
+            out[idx + 1] = Math.round(gSum / count);
+            out[idx + 2] = Math.round(bSum / count);
             out[idx + 3] = 255;
+            
+            const prevY = Math.max(y - radius, 0);
+            const nextY = Math.min(y + radius + 1, height - 1);
+            rSum += temp[(nextY * width + x) * 4] - temp[(prevY * width + x) * 4];
+            gSum += temp[(nextY * width + x) * 4 + 1] - temp[(prevY * width + x) * 4 + 1];
+            bSum += temp[(nextY * width + x) * 4 + 2] - temp[(prevY * width + x) * 4 + 2];
         }
     }
 

@@ -61,26 +61,23 @@ export async function decodeRawFile(file, options = {}) {
         // halfSize: true significantly speeds up decoding (1/2 or 1/4 resolution)
         await raw.open(uint8, {
             halfSize: !!fast,
-            useCameraWb: true, // AutoWB can sometimes fail/clip
+            useCameraWb: true,
             useAutoWb: false,
-            bright: 1.0, // Neutral brightness
-            outputColor: 1, // sRGB
-            outputBps: 8 // Force 8-bit to ensure Uint8Array match
+            bright: 1.1,
+            outputColor: 1, 
+            outputBps: 16, // Use 16-bit for internal decoding to preserve detail
+            noAutoBright: true
         });
 
-        // Implicit processing seems to be failing or incomplete in the WASM wrapper.
-        // We explicitly trigger the standard LibRaw pipeline steps.
-        // If these methods are already called by open(), re-calling them might be redundant but usually safe.
-        // If "open" in the WASM binding *only* does open_buffer, these are REQUIRED.
-        try {
+        // High-level open() should handle the pipeline, but some versions need explicit steps.
+        // We ensure dcraw_process is called if imageData() is empty.
+        let data = await raw.imageData();
+        if (!data || data.length === 0) {
+            console.log("[RAW] Data empty, triggering manual process...");
             await raw.runFn("unpack");
             await raw.runFn("dcraw_process");
-        } catch (e) {
-            console.warn("Manual unpack/process failed (might be built-in to open):", e);
+            data = await raw.imageData();
         }
-
-        const meta = await raw.metadata();
-        const data = await raw.imageData(); // Returns Uint8Array (RGB)
 
         if (!data || !meta) {
             throw new Error("Failed to decode data from LibRaw");
@@ -88,25 +85,35 @@ export async function decodeRawFile(file, options = {}) {
 
         const width = meta.width;
         const height = meta.height;
+        const is16Bit = meta.bps === 16;
 
-        // Convert RGB to RGBA for ImageData
-        // The data returned by imageData() is typically 3 channels (RGB)
-        // We need to create a 4-channel array (RGBA)
         const totalPixels = width * height;
         const rgbaData = new Uint8ClampedArray(totalPixels * 4);
 
         let rgbIdx = 0;
         let rgbaIdx = 0;
 
-        // Loop unrolling or simple loop usually fast enough for JS engines now
-        for (let i = 0; i < totalPixels; i++) {
-            rgbaData[rgbaIdx] = data[rgbIdx];       // R
-            rgbaData[rgbaIdx + 1] = data[rgbIdx + 1]; // G
-            rgbaData[rgbaIdx + 2] = data[rgbIdx + 2]; // B
-            rgbaData[rgbaIdx + 3] = 255;            // A (Opaque)
-
-            rgbIdx += 3;
-            rgbaIdx += 4;
+        if (is16Bit) {
+            // Convert 16-bit RGB to 8-bit RGBA
+            const data16 = new Uint16Array(data.buffer, data.byteOffset, data.length / 2);
+            for (let i = 0; i < totalPixels; i++) {
+                rgbaData[rgbaIdx] = data16[rgbIdx] >> 8;
+                rgbaData[rgbaIdx + 1] = data16[rgbIdx + 1] >> 8;
+                rgbaData[rgbaIdx + 2] = data16[rgbIdx + 2] >> 8;
+                rgbaData[rgbaIdx + 3] = 255;
+                rgbIdx += 3;
+                rgbaIdx += 4;
+            }
+        } else {
+            // Standard 8-bit conversion
+            for (let i = 0; i < totalPixels; i++) {
+                rgbaData[rgbaIdx] = data[rgbIdx];
+                rgbaData[rgbaIdx + 1] = data[rgbIdx + 1];
+                rgbaData[rgbaIdx + 2] = data[rgbIdx + 2];
+                rgbaData[rgbaIdx + 3] = 255;
+                rgbIdx += 3;
+                rgbaIdx += 4;
+            }
         }
 
         // Debug: Log sample pixels to check for black image issue
