@@ -1,0 +1,30 @@
+{
+    "version": 1,
+    "id": "outdoor_vivid_v1",
+    "name": "Outdoor Vivid",
+    "description": "High-contrast, saturated film-style colors. Best for outdoor and daylight scenes.",
+    "pipeline": [
+        {
+            "type": "tone_curve",
+            "params": {
+                "contrast": 0.32,
+                "black_lift": 0.0,
+                "highlight_rolloff": 0.12
+            }
+        },
+        {
+            "type": "color_grade",
+            "params": {
+                "temp_shift": 40,
+                "tint_shift": 0,
+                "sat": 1.25
+            }
+        },
+        {
+            "type": "local_contrast",
+            "params": {
+                "amount": 0.18
+            }
+        }
+    ]
+}

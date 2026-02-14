@@ -1,0 +1,30 @@
+{
+    "version": 1,
+    "id": "clasico_v1",
+    "name": "Clásico",
+    "description": "Iglesias, actos formales, álbum impreso. Color neutro y blancos limpios.",
+    "pipeline": [
+        {
+            "type": "tone_curve",
+            "params": {
+                "contrast": 0.30,
+                "black_lift": 0.00,
+                "highlight_rolloff": 0.05
+            }
+        },
+        {
+            "type": "color_grade",
+            "params": {
+                "temp_shift": 0,
+                "tint_shift": 0,
+                "sat": 1.00
+            }
+        },
+        {
+            "type": "sharpen",
+            "params": {
+                "amount": "suave"
+            }
+        }
+    ]
+}

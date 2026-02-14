@@ -1,0 +1,42 @@
+{
+    "version": 1,
+    "id": "calido_v1_3",
+    "name": "Cálido",
+    "description": "Bodas de día, civil, lifestyle. Cálido suave, piel natural y sombras amables.",
+    "pipeline": [
+        {
+            "type": "tone_curve",
+            "params": {
+                "contrast": 0.06,
+                "black_lift": 0.03,
+                "highlight_rolloff": 0.03
+            }
+        },
+        {
+            "type": "color_grade",
+            "params": {
+                "temp_shift": 140,
+                "tint_shift": 1,
+                "sat": 1.10
+            }
+        },
+        {
+            "type": "local_contrast",
+            "params": {
+                "amount": 0.02
+            }
+        },
+        {
+            "type": "sharpen",
+            "params": {
+                "amount": "suave"
+            }
+        },
+        {
+            "type": "resize",
+            "params": {
+                "long_edge": 2000
+            }
+        }
+    ]
+}

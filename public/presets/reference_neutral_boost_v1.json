@@ -1,0 +1,45 @@
+{
+    "version": 1,
+    "id": "reference_neutral_boost_v1",
+    "name": "Reference Neutral (Boost)",
+    "description": "Base neutral exposure normalization for low-light/events with stronger lift.",
+    "pipeline": [
+        {
+            "type": "exposure_normalize",
+            "params": {
+                "p_low": 5,
+                "p_high": 95,
+                "target_low": 4,
+                "target_high": 94,
+                "target_mid": 45,
+                "strength": 1.0,
+                "min_gain": 0.6,
+                "max_gain": 3.5,
+                "preserve_highlights": true,
+                "rolloff_threshold": 0.70
+            }
+        },
+        {
+            "type": "tone_curve",
+            "params": {
+                "contrast": 0.05,
+                "black_lift": 0.06,
+                "highlight_rolloff": 0.0
+            }
+        },
+        {
+            "type": "color_grade",
+            "params": {
+                "temp_shift": 0,
+                "tint_shift": 0,
+                "sat": 1.0
+            }
+        },
+        {
+            "type": "local_contrast",
+            "params": {
+                "amount": 0.05
+            }
+        }
+    ]
+}

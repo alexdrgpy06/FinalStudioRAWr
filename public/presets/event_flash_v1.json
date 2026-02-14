@@ -1,0 +1,30 @@
+{
+    "version": 1,
+    "id": "event_clean_v1",
+    "name": "Event Clean",
+    "description": "Neutral y limpio para eventos nocturnos/flash. Controla highlights y mantiene piel natural.",
+    "pipeline": [
+        {
+            "type": "tone_curve",
+            "params": {
+                "contrast": 0.06,
+                "black_lift": 0.05,
+                "highlight_rolloff": 0.18
+            }
+        },
+        {
+            "type": "color_grade",
+            "params": {
+                "temp_shift": 10,
+                "tint_shift": 2,
+                "sat": 0.98
+            }
+        },
+        {
+            "type": "local_contrast",
+            "params": {
+                "amount": 0.06
+            }
+        }
+    ]
+}
