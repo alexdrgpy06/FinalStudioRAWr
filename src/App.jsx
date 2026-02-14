@@ -161,7 +161,7 @@ function App() {
     setPreviewLoading(true);
     
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
     try {
         if (activeFile.file) {
