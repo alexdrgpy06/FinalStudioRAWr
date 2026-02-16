@@ -1,6 +1,18 @@
 /**
- * RAW File Decoder
- * Uses libraw-wasm for in-browser RAW decoding.
+ * Author: Alejandro Ramírez
+ * 
+ * RAW File Decoder - WebAssembly Bridge
+ * 
+ * This module facilitates high-fidelity RAW decoding within the 
+ * StudioRAWr desktop/web environment. It utilizes libraw-wasm with 
+ * AHD demosaicing and 16-bit internal processing to ensure the highest 
+ * possible quality for professional photography development.
+ * 
+ * Key Logic:
+ * - AHD (Adaptive Homogenity-Directed) demosaicing for superior detail
+ * - Optimized 16-to-8 bit conversion for RGBA ImageData
+ * - Integrated support for major camera RAW formats (ARW, NEF, CR2, etc.)
+ * - Worker-based isolation to maintain UI responsiveness
  */
 
 import LibRaw from 'libraw-wasm';

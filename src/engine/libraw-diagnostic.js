@@ -1,4 +1,14 @@
-
+/**
+ * Author: Alejandro Ramírez
+ * 
+ * LibRaw WASM Diagnostic Utility
+ * 
+ * A specialized diagnostic tool to verify the integrity and 
+ * responsiveness of the LibRaw-WASM module. It performs a "heartbeat" 
+ * check by instantiating the module and attempting a minimal 
+ * operation, ensuring the WASM environment is correctly initialized 
+ * before critical processing starts.
+ */
 import LibRaw from 'libraw-wasm';
 
 /**

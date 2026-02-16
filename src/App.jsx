@@ -1,3 +1,19 @@
+/**
+ * Author: Alejandro Ramírez
+ * 
+ * FinalStudioRAWr - Professional Image Development Engine
+ * 
+ * This application is the flagship of the StudioRAWr ecosystem. 
+ * It manages a high-fidelity image development pipeline, supporting 
+ * non-destructive RAW development, complex color grading, and 
+ * high-performance batch operations.
+ * 
+ * Key Logic:
+ * - Dual-engine orchestration (Native/Tauri + Browser/WASM)
+ * - Non-destructive adjustment layering via non-mutating state
+ * - Intelligent real-time preview generation for 16-bit RAW data
+ * - High-speed trilinear LUT interpolation
+ */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import FileListItem from './components/FileListItem';
 import { 

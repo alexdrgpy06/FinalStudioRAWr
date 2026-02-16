@@ -1,11 +1,19 @@
 /**
+ * Author: Alejandro Ramírez
+ * 
  * HaldCLUT LUT Processor
  * Applies a Hald Color Lookup Table (HaldCLUT) PNG to image data.
- * Port of Pipeline.step_lut_3d() from processor.py
- *
- * HaldCLUT format: A square PNG where the side length is level^3.
- * Common sizes: 64x64 (level=4, 4³=64), 512x512 (level=8, 8³=512)
- * Each pixel encodes a mapping from (R, G, B) → (R', G', B')
+ * 
+ * This module implements a high-performance 3D lookup table (LUT) 
+ * application engine using trilinear interpolation. It supports standard 
+ * square HaldCLUT formats (e.g., 64x64, 512x512) and provides 
+ * adjustable intensity blending.
+ * 
+ * Key Logic:
+ * - Square grid dimension parsing (level^3 vs level^2)
+ * - Trilinear interpolation across 8 adjacent nodes in the 3D color cube
+ * - Optimized Float32 table storage
+ * - Non-destructive intensity blending
  */
 
 /**

@@ -1,3 +1,13 @@
+/**
+ * Author: Alejandro Ramírez
+ * 
+ * FinalStudio Processing Bridge
+ * 
+ * This module acts as the unified dispatcher for image processing tasks.
+ * It abstracts the complexity of the dual-engine architecture, 
+ * automatically routing single and bulk jobs to the optimal engine 
+ * (Native vs Web) based on the current environment and file type.
+ */
 import { isTauri } from './platform.js';
 import { processFile as webProcessFile } from './image-engine.js';
 

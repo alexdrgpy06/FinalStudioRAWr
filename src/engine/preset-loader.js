@@ -1,11 +1,20 @@
 /**
- * Preset Loader
- * Loads JSON presets from bundled static files or IndexedDB.
- * Same JSON format as edge-agent/presets/*.json — zero migration.
- *
- * Port of edge-agent/preset_loader.py PresetLoader class.
+ * Author: Alejandro Ramírez
+ * 
+ * FinalStudio Preset Loader
+ * Orchestrates the loading and resolution of image processing presets.
+ * 
+ * This module manages a centralized registry of bundled (static) and 
+ * user-created (IndexedDB) presets. It maintains full compatibility 
+ * with the legacy StudioRAWr JSON format and supports advanced 
+ * linked-preset resolution logic.
+ * 
+ * Key Logic:
+ * - Asynchronous initialization of bundled and persistent user presets
+ * - Fuzzy-matching preset resolution
+ * - V2 linked-preset orchestration (Base + Creative + Adjustments)
+ * - CRUD operations for user-defined presets via IndexedDB
  */
-
 import { getPresetStore, getAllPresets as getStoredPresets } from '../storage/storage.js';
 
 // Bundled preset manifest (loaded from /presets/ at runtime)

@@ -1,9 +1,20 @@
 /**
+ * Author: Alejandro Ramírez
+ * 
  * AutoStudio Image Processing Engine
  * Port of edge-agent/processor.py Pipeline class to JavaScript
- * All processing runs locally in the browser using Canvas 2D / typed arrays.
+ * 
+ * This module implements the core high-precision image processing 
+ * pipeline for the StudioRAWr suite. It handles linear color space 
+ * transformations, intelligent exposure normalization, and a 
+ * comprehensive set of professional-grade development steps.
+ * 
+ * Key Logic:
+ * - High-precision linear/sRGB conversions
+ * - Intelligent Exposure normalization (LIFT / NEUTRAL / RECOVER)
+ * - Optimized box-blur based local contrast and sharpening
+ * - Trilinear interpolation for 3D HaldCLUT application
  */
-
 import { applyHaldCLUT } from './lut-processor.js';
 
 // ─────────────────────────────────────────────────────────

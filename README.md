@@ -1,33 +1,23 @@
-# FinalStudio Cloud ☁️
+# FinalStudioRAWr 📸
 
-**FinalStudio Cloud** is a lightweight, high-performance web-only image processor derived from FinalStudioRAWr. It is optimized for **Vercel deployment** and focuses exclusively on the **Browser Web Engine (WASM/JS)** for fast, accessible image processing without the need for a desktop installation.
+The ultimate professional RAW processing engine for the modern creator.
 
-## 🚀 Key Features
+## 🚀 Overview
+FinalStudioRAWr is a high-performance desktop and web suite designed for professional photographers and digital artists. It bridges the gap between high-end native performance and web accessibility, offering a dual-engine architecture (Native GPU/Rust + Browser WASM/JS) for non-destructive RAW development.
 
-- **WASM-Powered Core:** High-performance RAW decoding and image processing using LibRaw-WASM and optimized JavaScript.
-- **Vercel Optimized:** Extremely lightweight architecture designed for fast loading and low-latency processing in the cloud.
-- **Professional Pipeline:** Full support for Exposure, Tone Curves, HSL, Color Grading, and 3D LUTs entirely in the browser.
-- **Privacy First:** All processing happens locally in your browser's Web Workers. No images are uploaded to any server.
-- **Batch Processing:** Parallel processing using Browser Web Workers.
+## ✨ Key Features
+- **Dual-Engine Architecture**: Seamlessly switches between a high-performance Rust/Tauri native backend and a lightweight WASM browser engine.
+- **Native RAW Decoding**: Direct integration with hardware for rapid decoding of major camera formats.
+- **Advanced Color Grading**: Full support for 3D LUTs, XMP presets, and real-time HSL adjustments.
+- **Hardware Acceleration**: Leverages local GPU power for sub-second processing and real-time previews.
+- **Studio Workflow**: Integrated batch processing and asset management tools.
 
-## 🛠️ Technology Stack
-
-- **Frontend:** React 18+, Tailwind CSS, Zustand, Lucide Icons.
-- **Engine:** Web Workers, LibRaw-WASM, Canvas API.
-- **Deployment:** Vercel / Vite.
-
-## 📦 Changes from RAWr Version
-
-- Removed Tauri/Native GPU engine for minimal bundle size.
-- Streamlined UI to focus on cloud/web workflows.
-- Simplified processing bridge (Cloud-only).
-- Removed desktop-specific dependencies and local file system hooks.
-
-## 🚀 Deployment
-
-1. Push this branch (`cloud-only`) to GitHub.
-2. Deploy the directory to Vercel.
-3. The `vercel.json` provides necessary COOP/COEP headers for WASM memory isolation.
+## 🛠️ Tech Stack
+- **Native Core**: Rust, Tauri, GPU Shaders.
+- **Web Interface**: React 18, WebGL, WebAssembly (LibRaw).
+- **State Engine**: Zustand with local persistence.
+- **Styling**: Tailwind CSS.
 
 ---
-© 2026 FinalStudio Team
+**[STABLE VERSION - DO NOT MODIFY CORE LOGIC]**
+*Created and maintained by Alejandro Ramírez.*
